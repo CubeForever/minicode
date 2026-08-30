@@ -22,29 +22,16 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests -q --cov=minicode --cov-report=term 2>&1 | tee pytest.log
-      - name: debug summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "### environment"
-            python --version 2>&1
-            pip list 2>/dev/null | grep -iE "pytest|cov|coverage|ruff" || true
-            echo "### pytest output (tail 150)"
-            tail -n 150 pytest.log 2>/dev/null || echo "(no log)"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: dump debug annotations
+      - name: debug annotations
         if: failure()
         shell: bash
         run: |
           {
             echo "python: $(python --version 2>&1)"
-            echo "pip: $(pip list 2>/dev/null | grep -iE 'pytest|cov|coverage' | tr '
-' '|')"
+            echo "pip: $(pip list 2>/dev/null | grep -iE 'pytest|cov|coverage' | tr '\n' '|')"
           } > dbg.txt
           tail -n 80 pytest.log >> dbg.txt 2>/dev/null || echo "(no pytest.log)" >> dbg.txt
-          flat=$(tr '
-' '|' < dbg.txt | sed 's/%/%25/g')
+          flat=$(tr '\n' '|' < dbg.txt | sed 's/%/%25/g')
           echo "$flat" | fold -w 380 > dbg-chunks.txt
           n=0
           while IFS= read -r chunk; do
