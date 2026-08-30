@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 from .guard import bash_guard_reason, file_guard_reason
 from .llm import ToolUnsupportedError, tool_message, user_message
 from .session import Session
-from .tools.base import ToolContext, ToolError
+from .tools.base import ToolContext, ToolError, summarize_result
 from .ui import Spinner, StreamRenderer
 
 MODES = ("default", "accept-edits", "plan", "full-access")
@@ -91,6 +91,7 @@ class Agent:
         self.checkpoints = checkpoints   # CheckpointManager or None
         self.system_prompt = ""
         self.tools_disabled = False      # set when the model rejects tools
+        self._error_history = []         # (tool_name, error_signature) for repeat detection
         cwd = getattr(config, "cwd", None) or Path.cwd()
         self.ctx = ToolContext(cwd=cwd, config=config, session=session, ui=ui,
                                agent_factory=None)
@@ -212,6 +213,44 @@ class Agent:
 
     # ---------- tools ----------
 
+    def _attribute_failure(self, tool_name: str, error_msg: str) -> str:
+        """Attach actionable suggestions to tool errors, and detect repeat failures.
+
+        Returns the (possibly enriched) error message. When the same tool fails
+        with the same signature 3+ times in a row, appends a strong nudge to
+        change strategy instead of retrying blindly.
+        """
+        msg_lower = error_msg.lower()
+        suggestions = []
+        if any(k in msg_lower for k in ("no such file", "not found", "不存在", "找不到")):
+            if tool_name in ("read_file", "edit_file", "write_file", "bash"):
+                suggestions.append("先用 glob 或 list_dir 确认正确路径，注意相对路径基准是项目根目录")
+        if any(k in msg_lower for k in ("permission", "权限", "access denied", "eacces")):
+            suggestions.append("检查文件权限，或用 /add-dir 授权额外目录")
+        if any(k in msg_lower for k in ("invalid", "json", "参数", "argument", "schema")):
+            suggestions.append("检查工具参数是否匹配 input_schema，必要时用 /tools 查看定义")
+        if any(k in msg_lower for k in ("timeout", "timed out", "超时")):
+            suggestions.append("命令耗时过长，改用 bash(command, background=true) 后台执行")
+        if any(k in msg_lower for k in ("stale", "modified since", "已被修改")):
+            suggestions.append("文件在读取后被外部修改，先重新 read_file 再编辑")
+        # repeat-failure detection: same tool + same error prefix
+        sig = (tool_name, error_msg[:80])
+        self._error_history.append(sig)
+        self._error_history = self._error_history[-10:]
+        repeat_count = sum(1 for s in self._error_history[-3:] if s == sig)
+        if repeat_count >= 3:
+            suggestions.append("同类错误已连续出现 3 次——停止重试，换策略或用 ask_user 向用户澄清")
+        if suggestions:
+            return error_msg + "\n\n[归因建议] " + "；".join(suggestions)
+        return error_msg
+
+    def _maybe_summarize(self, tool_name: str, result: str) -> str:
+        """Apply tool-aware summarization to oversized results."""
+        if not isinstance(result, str):
+            return result
+        limit = getattr(self.session, "result_limit", 30000)
+        return summarize_result(tool_name, result, limit)
+
     def _try_parallel(self, tool_calls):
         """Run a batch of read-only tool calls concurrently. Returns a list of
         (content, is_error) in call order, or None when the batch isn't eligible."""
@@ -241,15 +280,16 @@ class Agent:
             try:
                 r = tool.run(args, self.ctx)
             except ToolError as e:
-                return f"Error: {e}", True
+                return self._attribute_failure(tool.name, f"Error: {e}"), True
             except Exception as e:
-                return f"Error: {type(e).__name__}: {e}", True
+                return self._attribute_failure(tool.name,
+                                               f"Error: {type(e).__name__}: {e}"), True
             if isinstance(r, dict) and "_blocks" in r:
                 blocks = r["_blocks"]
                 text = " ".join(b.get("text", "") for b in blocks
                                 if b.get("type") == "text") or "(image)"
                 return {"blocks": blocks, "text": text}, False
-            return r, False
+            return self._maybe_summarize(tool.name, r), False
 
         with Spinner(f"parallel ×{len(planned)}"):
             with ThreadPoolExecutor(max_workers=min(4, len(planned))) as ex:
@@ -311,7 +351,7 @@ class Agent:
         try:
             result = tool.run(args, self.ctx)
         except ToolError as e:
-            msg = f"Error: {e}"
+            msg = self._attribute_failure(tool.name, f"Error: {e}")
             self.ui.tool_result_note(msg)
             return msg, True
         except KeyboardInterrupt:
@@ -319,7 +359,8 @@ class Agent:
         except Exception as e:
             if getattr(self.config, "debug", False):
                 traceback.print_exc()
-            msg = f"Error: {type(e).__name__}: {e}"
+            msg = self._attribute_failure(tool.name,
+                                          f"Error: {type(e).__name__}: {e}")
             self.ui.tool_result_note(msg)
             return msg, True
         if isinstance(result, dict) and "_blocks" in result:
@@ -331,6 +372,7 @@ class Agent:
             if hout:
                 blocks.append({"type": "text", "text": f"[hook feedback] {hout[:300]}"})
             return {"blocks": blocks}, False
+        result = self._maybe_summarize(tool.name, result)
         self.ui.tool_result_note(result)
         _hmsg, hout = self._run_hook("post_tool_use", {"tool": tool.name, "args": args})
         if hout and isinstance(result, str):

@@ -84,9 +84,25 @@ class Session:
         return (self.last_usage or {}).get("input") or self.approx_tokens()
 
     # ---------- microcompaction ----------
+
+    # Tools whose results matter more for future edits keep more context.
+    _HIGH_VALUE_TOOLS = {"write_file", "edit_file", "apply_patch", "notebook_edit"}
+    _MEDIUM_VALUE_TOOLS = {"bash", "read_file", "web_fetch"}
+
+    def _elide_budget(self, tool_name: str, is_error: bool) -> int:
+        """How many chars to keep when eliding an old tool result."""
+        if is_error:
+            return 400  # errors always keep more (stack traces, diagnostics)
+        if tool_name in self._HIGH_VALUE_TOOLS:
+            return 800  # write/edit results tell the model what it changed
+        if tool_name in self._MEDIUM_VALUE_TOOLS:
+            return 300
+        return 180  # read-only listings, search results, etc.
+
     def elide_old_tool_results(self, keep_recent: int = 8, min_chars: int = 500) -> int:
         """Replace big old tool outputs with short markers (structure preserved),
-        keeping the most recent ones verbatim. Returns number elided."""
+        keeping the most recent ones verbatim. Retention budget is tool-aware:
+        write/edit results keep more than read-only listings. Returns number elided."""
         n = len(self.messages)
         changed = 0
         for m in self.messages[:max(0, n - keep_recent)]:
@@ -94,7 +110,8 @@ class Session:
                 continue
             content = m.get("content")
             if isinstance(content, str) and len(content) > min_chars:
-                head = content[:180].replace("\n", " ⏎ ")
+                budget = self._elide_budget(m.get("name", ""), bool(m.get("is_error")))
+                head = content[:budget].replace("\n", " ⏎ ")
                 m["content"] = f"[elided tool result: {len(content)} chars] {head}…"
                 changed += 1
         return changed
