@@ -1,7 +1,5 @@
 import json
-from pathlib import Path
 
-import pytest
 
 from minicode.agent import Agent, MODES
 from minicode.checkpoints import CheckpointManager
@@ -11,7 +9,6 @@ from minicode.fake import FakeProvider
 from minicode.llm import _to_anthropic_messages, _to_openai_messages
 from minicode.session import Session
 from minicode.tools import build_registry
-from minicode.tools.base import ToolContext
 from minicode.tools.shell import ShellState
 from minicode.ui import UI
 

@@ -95,7 +95,6 @@ def test_exit_plan_allowed_prompts(tmp_path):
 
 
 def test_plan_allowed_prompts_authorize_in_accept_edits(tmp_path):
-    from minicode.agent import rule_matches
     # simulate: plan approved -> rules active; accept-edits auto-approves edits,
     # but bash normally needs confirm. The plan rule must auto-approve pytest.
     script = [

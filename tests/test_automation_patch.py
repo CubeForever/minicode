@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -295,7 +294,7 @@ def test_stream_json_output(tmp_path, monkeypatch, capsys):
     from minicode import cli
     rc = cli.main(["-p", "go", "--yolo", "--output-format", "stream-json"])
     assert rc == 0
-    lines = [json.loads(l) for l in capsys.readouterr().out.strip().splitlines()]
+    lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
     roles = [m["role"] for m in lines]
     assert roles[0] == "user"
     assert "assistant" in roles

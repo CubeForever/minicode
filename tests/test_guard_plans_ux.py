@@ -3,7 +3,6 @@ import threading
 import types
 from pathlib import Path
 
-import pytest
 
 from minicode.agent import Agent
 from minicode.checkpoints import CheckpointManager
@@ -54,7 +53,7 @@ def test_bash_guard_reasons():
 
 
 def test_bash_guard_ignores_benign_fd_redirections():
-    cmd = ('cd "D:\proj" && ls -la && echo "---PYTHON---" && python --version 2>&1 '
+    cmd = (r'cd "D:\proj" && ls -la && echo "---PYTHON---" && python --version 2>&1 '
            '&& echo "---FILES---" && find . -type f -not -path "./.git/*" '
            '2>/dev/null | head -50')
     assert bash_guard_reason(cmd) is None          # 实录中的误报命令

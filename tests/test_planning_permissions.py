@@ -9,7 +9,7 @@ from minicode.config import Config
 from minicode.mcp import McpManager
 from minicode.session import Session
 from minicode.tools.base import ToolContext, ToolError
-from minicode.tools.fs import EditFileTool, ReadFileTool, WriteFileTool
+from minicode.tools.fs import EditFileTool, ReadFileTool
 from minicode.tools.notebook import NotebookEditTool
 from minicode.tools.plan import ExitPlanTool
 from minicode.tools.websearch import parse_results

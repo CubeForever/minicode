@@ -11,4 +11,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - run: ruff check minicode
+      - run: ruff check minicode tests

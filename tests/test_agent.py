@@ -1,12 +1,10 @@
 import json
-from pathlib import Path
 
 from minicode.agent import Agent
 from minicode.config import Config
 from minicode.fake import FakeProvider
 from minicode.session import Session
 from minicode.tools import build_registry
-from minicode.tools.base import ToolContext
 from minicode.tools.shell import ShellState
 from minicode.ui import UI
 

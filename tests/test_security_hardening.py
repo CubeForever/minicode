@@ -10,7 +10,6 @@ import pytest
 from minicode.agent import Agent
 from minicode.checkpoints import CheckpointManager
 from minicode.config import Config
-from minicode.fake import FakeProvider
 from minicode.session import Session
 from minicode.tools import build_registry
 from minicode.tools.base import ToolContext, ToolError
