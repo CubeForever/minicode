@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.9.1 · 20 个内置工具 · 189 项自动化测试 · 核心约 6000 行可通读源码 · MIT 开源**
+当前状态：**v0.9.1 · 20 个内置工具 · 189 项自动化测试 · 核心约 5600 行可通读源码 · MIT 开源**
 
 ## 它能做什么
 
@@ -17,7 +17,7 @@
 
 ## 优势
 
-- **零依赖、全部可读**：核心约 6000 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
+- **零依赖、全部可读**：核心约 5600 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
 - **不锁定模型**：一个环境变量切换 GLM / DeepSeek / Claude / 本地 Ollama；兼容层在真实中转站联调中打磨，新端点的怪癖大多自动消化
 - **安全边界内建**：敏感路径强制确认（yolo 也不放行）、SSRF 封禁、第三方插件/钩子首次信任确认、危险命令告警
 - **三项独创**（Claude Code / Codex 均无）：项目大脑（Brain）、自检回路（Verify Gate）、圆桌模式（Panel）
@@ -28,7 +28,7 @@
 - `serve` 模式本质是以你的用户身份执行命令（仅本机 + token 鉴权），不要暴露到公网
 - bash 无系统级沙箱（Windows 无可移植方案），用敏感路径门禁替代
 - 主要在 Windows 实测，macOS/Linux 有适配但欢迎反馈；Python 3.9 静态合规、运行验证以 3.10+ 为主
-- 对话历史明文存于 `~/.minicode/sessions/`；图片输入依赖视觉模型；无 vim 键位与图片粘贴
+- 对话历史默认明文存于 `~/.minicode/sessions/`（可用 `--no-save` 或配置 `"save_sessions": false` 完全关闭落盘）；图片输入依赖视觉模型；无 vim 键位与图片粘贴
 
 ## 下载安装
 
@@ -45,7 +45,7 @@ pip install git+https://github.com/CubeForever/minicode.git
 ```bash
 git clone https://github.com/CubeForever/minicode.git
 cd minicode
-pip install -e .[dev]        # [dev] 额外装 pytest；python -m pytest tests -q 验证
+pip install -e .[dev]        # [dev] 额外装 pytest / ruff / pytest-cov；python -m pytest tests -q 验证
 ```
 
 **前置要求**：Python ≥ 3.9（Windows / macOS / Linux 均可；Windows 装 Git 即自带所需的 bash）。
@@ -102,7 +102,7 @@ minicode -p "总结项目" --output-format json < task.txt   # headless
 
 ### 斜杠命令
 
-`/help` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/copy` `/exit`
+`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/copy` `/exit`
 
 ### 自定义扩展
 
@@ -118,12 +118,14 @@ minicode/
 ├── cli.py          REPL / 斜杠命令 / 计划批准门
 ├── agent.py        主循环：权限、门禁、hooks、检查点、思考预算
 ├── llm.py          双协议适配 + SSE 归一化 + 重试 + 缓存
+├── config.py       配置加载 / profiles / 权限合并 / MCP 配置
 ├── mcp.py          MCP 客户端（stdio / HTTP）
 ├── session.py      会话 / 压缩 / 持久化
 ├── checkpoints.py  文件检查点（undo / rewind）
 ├── guard.py        敏感路径门禁
 ├── prompts.py      系统提示词（注入防御 / Git 护栏）
 ├── plugins.py      本地插件加载
+├── plans.py        计划存档管理
 ├── server.py       serve 模式（本地 HTTP API）
 ├── ui.py           终端渲染 / 余量条 / 确认框
 ├── lineinput.py    Tab 补全（readline）

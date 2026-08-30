@@ -1,13 +1,14 @@
 # 参与贡献 minicode
 
-感谢你愿意让这个项目变得更好！minicode 刻意保持**零第三方依赖**和**小而清晰的代码库**（核心约 6000 行），任何人都能读完整个实现。这份文档帮你找到最合适的贡献方式。
+感谢你愿意让这个项目变得更好！minicode 刻意保持**零第三方依赖**和**小而清晰的代码库**（核心约 5600 行），任何人都能读完整个实现。这份文档帮你找到最合适的贡献方式。
 
 ## 环境搭建
 
 ```bash
 git clone <仓库地址> && cd minicode
-pip install -e .[dev]        # 安装 + pytest（唯一的开发依赖）
+pip install -e .[dev]        # 安装 + pytest / ruff / pytest-cov
 python -m pytest tests -q    # 全部测试应当通过
+python -m ruff check minicode tests   # lint 应当通过
 python -m minicode           # 可选：配一个 API key 真跑，或离线模式：
 MINICODE_FAKE_LLM=demo python -m minicode -p hi --yolo
 ```

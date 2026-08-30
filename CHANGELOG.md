@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.1 (2026-08-30)
+
+代码审查闭环修复与工程化补强：
+- 修复 server.py /api/clear 与 /api/compact 的 NameError（改用 outer.agent）
+- 清理 shell.py BashOutputTool 重复的 input_schema 死代码
+- 统一 mcp.py 版本号从 __version__ 取（消除 stdio/HTTP 三处不一致）
+- 新增 ruff 配置（E/F/W，py39 目标）与 lint CI job；ruff 抓到 2 个潜伏 F821 未导入 bug 并修复
+- 测试 CI 加 pytest-cov 覆盖率报告
+- 测试文件从版本号命名重命名为功能域命名（git mv 保留历史）
+- 新增 --no-save / "save_sessions": false 隐私模式，会话完全不落盘
+- 新增 MINICODE_DEBUG=1 结构化日志（~/.minicode/debug.log），serve 崩溃异常入日志
+- web_search 失败时明确提示改用 web_fetch 或检查代理
+- fake demo 改为纯只读流程，零文件副作用
+- 文档同步：README 行数/架构图/隐私模式/斜杠命令更新
+
 ## 0.9.0 (2026-08-30)
 
 化用 ZCode 的设计：Skills 系统（内置系统化调试/TDD/交付前验证/写计划四技能 + 项目自定义）、
