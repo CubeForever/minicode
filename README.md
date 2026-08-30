@@ -190,6 +190,18 @@ python -m pytest tests -q     # 54 个用例
 
 覆盖：双协议 SSE 解析与累积、消息转换（图像块/thinking 回放/工具结果分组）、文件工具（含新鲜度拒绝）、bash（持久 cwd/超时/后台生命周期）、MCP 端到端（内置 echo 服务器）、Notebook 编辑、WebSearch 解析、计划模式拦截、权限规则、检查点回滚、自定义命令/子智能体加载、headless JSON 输出。
 
+## 参与贡献
+
+minicode 欢迎所有人一起迭代升级——**零依赖 + 小代码库意味着每个人都能读完整个实现**。贡献路径由易到难：
+
+1. **技能/命令/子智能体**——纯 Markdown，不改代码（`.minicode/skills|commands|agents/`）
+2. **多模型兼容报告**——跑 `minicode --probe` 提交 issue，附输出即可，适配垫片因此持续进化（最急需）
+3. **新工具**——继承 `Tool` 五步约 100 行，教程见 CONTRIBUTING
+4. **跨平台测试**——macOS/Linux 上跑 `pytest tests -q` 报告结果
+5. **核心改进**——权限/上下文/适配层，先开 issue 讨论设计
+
+完整流程见 **[CONTRIBUTING.md](CONTRIBUTING.md)**（环境搭建、项目地图、规则：一个 PR 一个主题、新功能必带测试、不加第三方运行时依赖）。提交前 `pytest tests -q` 全绿。
+
 ## 安全与信任边界（公开使用前必读）
 
 - **提示注入是所有编码智能体的共同风险面**：模型读取的文件/网页内容是"数据"而不是指令——minicode 已在系统提示中明确这一边界，并内置敏感路径门禁、SSRF 封禁与危险命令告警，但**没有任何外壳能 100% 消除注入**。给不可信代码库跑任务时，优先使用 `plan`/`default` 模式而不是 yolo。
