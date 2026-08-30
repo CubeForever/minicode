@@ -18,6 +18,11 @@ from typing import Dict, List, Optional, Tuple
 from .tools.base import Tool, ToolError
 
 PROTOCOL_VERSION = "2024-11-05"
+
+
+def _version() -> str:
+    from . import __version__
+    return __version__
 REQUEST_TIMEOUT = 30
 
 
@@ -64,7 +69,7 @@ class McpClient:
         try:
             self.request("initialize", {
                 "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                "clientInfo": {"name": "minicode", "version": "0.3.0"}})
+                "clientInfo": {"name": "minicode", "version": _version()}})
             self.notify("notifications/initialized", {})
             result = self.request("tools/list", {}) or {}
             self.tools = result.get("tools") or []
@@ -194,9 +199,9 @@ class McpClient:
 
     def _start_http(self) -> bool:
         try:
-            result = self._http_rpc("initialize", {
+            self._http_rpc("initialize", {
                 "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                "clientInfo": {"name": "minicode", "version": "0.7.0"}})
+                "clientInfo": {"name": "minicode", "version": _version()}})
             self.notify("notifications/initialized", {})
             listing = self.request("tools/list", {}) or {}
             self.tools = listing.get("tools") or []

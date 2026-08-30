@@ -50,7 +50,7 @@ def list_plans(cwd) -> List[Tuple[int, Path, str, str]]:
     rows = []
     for p in sorted(d.glob("*.md"), reverse=True):
         meta, body = _parse(p)
-        title = next((l.strip() for l in body.splitlines() if l.strip()), "(空)")
+        title = next((ln.strip() for ln in body.splitlines() if ln.strip()), "(空)")
         rows.append((p, meta.get("status", "in-progress"), title[:70]))
     return [(i, p, s, t) for i, (p, s, t) in enumerate(rows, 1)]
 

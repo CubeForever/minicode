@@ -108,7 +108,8 @@ class WebSearchTool(Tool):
         except urllib.error.HTTPError as e:
             raise ToolError(f"search failed: HTTP {e.code}")
         except (urllib.error.URLError, OSError) as e:
-            raise ToolError(f"search failed: {e}")
+            raise ToolError(f"search failed: {e} —— 当前网络可能无法访问 DuckDuckGo；"
+                            "可改用 web_fetch 直接访问搜索引擎页面，或检查代理设置")
         results = parse_results(html)
         if not results:
             return f"no results found for {query!r} (the search engine layout may have changed)"

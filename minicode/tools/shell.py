@@ -160,7 +160,7 @@ class _BaseShellTool(Tool):
             ps = (f"{command}\n"
                   f"Write-Output (\"{MARKER}\" + (Get-Location).Path)")
             return [exe, "-NoProfile", "-NonInteractive", "-Command", ps]
-        one_liner = " & ".join(l for l in command.splitlines() if l.strip())
+        one_liner = " & ".join(ln for ln in command.splitlines() if ln.strip())
         return ["cmd", "/V:ON", "/C", f"{one_liner} & echo {MARKER}!CD!"]
 
     def _popen(self, argv: list) -> subprocess.Popen:
@@ -268,13 +268,6 @@ class BashOutputTool(_BaseShellTool):
     kind = "read"
     description = ("Read new output from a background shell started with "
                    "bash run_in_background=true. Omits output already returned.")
-    input_schema = {
-        "type": "object",
-        "properties": {
-            "id": {"type": "string", "description": "Background shell id (default: latest)."},
-        },
-    }
-
     input_schema = {
         "type": "object",
         "properties": {

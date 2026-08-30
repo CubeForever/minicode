@@ -79,14 +79,16 @@ class MinicodeServer:
                         result = outer._run_turn(prompt, bool(body.get("yolo")))
                         return self._json(200, result)
                     except Exception as e:  # never leave the client with no response
+                        import logging
+                        logging.getLogger("minicode.server").exception("turn crashed")
                         return self._json(500, {"error": f"{type(e).__name__}: {e}"})
                     finally:
                         outer._release()
                 if self.path == "/api/clear":
-                    agent.reset_session()
+                    outer.agent.reset_session()
                     return self._json(200, {"ok": True, "messages": 0})
                 if self.path == "/api/compact":
-                    stats = agent.compact()
+                    stats = outer.agent.compact()
                     return self._json(200, {"ok": True, **stats})
                 return self._json(404, {"error": "not found"})
 

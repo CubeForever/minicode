@@ -30,15 +30,12 @@ class FakeProvider(Provider):
 
     @classmethod
     def demo(cls) -> "FakeProvider":
+        """离线演示：只读流程（list_dir + 报告），不在用户目录产生任何文件。"""
         return cls([
-            {"text": "好的，我先看一下当前目录，然后创建 hello.txt。",
-             "tool_calls": [
-                 {"id": "call_1", "name": "list_dir", "args": "{}"},
-                 {"id": "call_2", "name": "write_file",
-                  "args": json.dumps({"path": "hello.txt",
-                                      "content": "Hello from minicode!\n"})},
-             ]},
-            {"text": "已创建 hello.txt，里面写了一句问候语。"},
+            {"text": "好的，我先看一下当前目录结构。",
+             "tool_calls": [{"id": "call_1", "name": "list_dir", "args": "{}"}]},
+            {"text": "这是离线演示（假模型）：目录结构如上。配置真实 API 后即可体验"
+                     "完整的多轮任务、文件编辑与命令执行。"},
         ])
 
     def stream(self, messages, tools, system, thinking: int = 0) -> Iterator[dict]:

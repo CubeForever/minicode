@@ -17,11 +17,9 @@ The whole patch is parsed first; any error aborts before touching files.
 from __future__ import annotations
 
 import difflib
-from pathlib import Path
 
 from .base import Tool, ToolContext, ToolError
-from .fs import (_resolve, _read_text_normalized, _dominant_newline,
-                 _write_text_nl)
+from .fs import (_resolve, _read_text_normalized, _write_text_nl)
 
 
 def _parse_patch(patch: str) -> list:

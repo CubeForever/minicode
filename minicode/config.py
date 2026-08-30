@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .ui import bold, dim, yellow
+from .ui import bold, dim
 
 USER_CONFIG = Path.home() / ".minicode.json"
 PROJECT_CONFIG = Path(".minicode.json")
@@ -46,6 +46,7 @@ class Config:
     reasoning_effort: str = ""                       # "" | low | medium | high
     verify_command: str = ""                         # self-verify gate, e.g. "pytest -q"
     turn_budget: int = 0                             # max tokens per turn (0 = off)
+    save_sessions: bool = True                       # False 时不落盘会话历史（隐私模式）
     webfetch_allow_private: bool = False             # allow web_fetch to hit internal IPs
     hooks_from_project: dict = field(default_factory=dict)  # hooks defined by project config (trust-gated)
     extra_dirs: list = field(default_factory=list)   # /add-dir
@@ -151,6 +152,7 @@ def load_config(args) -> Optional[Config]:
         reasoning_effort=str(merged.get("reasoning_effort") or ""),
         verify_command=str(merged.get("verify_command") or ""),
         turn_budget=int(merged.get("turn_budget") or 0),
+        save_sessions=bool(merged.get("save_sessions", True)),
         webfetch_allow_private=bool(merged.get("webfetch_allow_private", False)),
         hooks_from_project=_as_dict(_read_json(PROJECT_CONFIG).get("hooks")),
         extra_dirs=list(merged.get("extra_dirs") or []),

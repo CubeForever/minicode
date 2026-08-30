@@ -15,8 +15,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install pytest
-      - run: python -m pytest tests -q
+      - run: pip install pytest pytest-cov
+      - run: python -m pytest tests -q --cov=minicode --cov-report=term
       - run: python -m minicode --version
       - name: offline smoke (fake LLM)
         shell: bash

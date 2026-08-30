@@ -127,7 +127,7 @@ class UI:
         self._need_newline = False
 
     def tool_result_note(self, text: str):
-        lines = [l for l in str(text).splitlines() if l.strip()]
+        lines = [ln for ln in str(text).splitlines() if ln.strip()]
         if not lines:
             return
         extra = f" (+{len(lines) - 1} lines)" if len(lines) > 1 else ""
@@ -156,10 +156,10 @@ class UI:
     def banner(self, version: str, cfg, cwd):
         mode = MODE_LABELS.get(cfg.mode, cfg.mode)
         self.plain()
-        self._write(cyan("  ╭─ ") + bold(f"minicode") + gray(f" v{version}") +
+        self._write(cyan("  ╭─ ") + bold("minicode") + gray(f" v{version}") +
                     cyan(" ────────────────────────────") + "\n")
         self._write(cyan("  │") + gray("  终端编码智能体 · 零依赖 · 多模型适配") + "\n")
-        self._write(cyan("  │") + f"  {bold(cfg.model)}" + gray(f"  ·  {cfg.provider}")) 
+        self._write(cyan("  │") + f"  {bold(cfg.model)}" + gray(f"  ·  {cfg.provider}"))
         self._write("\n" + cyan("  │") + f"  {mode}")
         self._write("\n" + cyan("  │") + gray(f"  {cwd}"))
         self._write("\n" + cyan("  ╰─ ") + gray("/help 命令 · Ctrl+C 打断 · Ctrl+D 退出") + "\n\n")

@@ -22,9 +22,9 @@ from .mcp import McpManager
 from .prompts import SUBAGENT_PROMPT, REVIEW_PROMPT, build_system_prompt
 from .session import SESSIONS_DIR, Session
 from .tools import build_registry
-from .tools.base import ToolContext, ToolRegistry
+from .tools.base import ToolContext, ToolError, ToolRegistry
 from .tools.shell import ShellState, detect_shell
-from .ui import MODE_LABELS, Spinner, SubUI, UI, _fmt_tokens, cyan, gray, green, red, yellow
+from .ui import MODE_LABELS, Spinner, SubUI, UI, _fmt_tokens, cyan, dim, gray, green, red, yellow
 
 BUILTIN_COMMANDS = {
     "review": ("审查代码改动（git diff 或指定文件）", REVIEW_PROMPT),
@@ -91,6 +91,8 @@ def _parse_args(argv=None):
     ap.add_argument("--serve", action="store_true",
                     help="以本地 HTTP API 模式运行（127.0.0.1，token 鉴权）")
     ap.add_argument("--port", type=int, default=8765, help="serve 模式端口（默认 8765）")
+    ap.add_argument("--no-save", action="store_true",
+                    help="隐私模式：不把会话历史写入磁盘")
     ap.add_argument("-c", "--continue", dest="continue_last", action="store_true",
                     help="恢复上一次会话")
     ap.add_argument("--resume", action="store_true", help="交互式选择历史会话")
@@ -278,6 +280,8 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
 args_state = {}
 
 def _save(agent: Agent) -> None:
+    if not getattr(agent.config, "save_sessions", True):
+        return
     s = agent.session
     first = next((m.get("content") or "" for m in s.messages if m.get("role") == "user"), "")
     try:
@@ -726,7 +730,7 @@ def _expand_mentions(text: str, agent: Agent) -> object:
     global MENTION_RE
     if MENTION_RE is None:
         MENTION_RE = _re.compile(r"@([\w\-./\\ \u4e00-\u9fff]+?)(?=\s|$)")
-    from .tools.fs import IMAGE_TYPES, _read_text, _resolve
+    from .tools.fs import IMAGE_TYPES, _read_text
     import base64 as _b64
 
     cwd = agent.config.cwd or Path.cwd()
@@ -1172,6 +1176,8 @@ def main(argv=None) -> int:
     cfg.cwd = cwd
     if args.budget:
         cfg.turn_budget = args.budget
+    if getattr(args, "no_save", False):
+        cfg.save_sessions = False
 
     # CLI tool rules merge into permissions
     if args.allowed_tools or args.disallowed_tools:
@@ -1183,6 +1189,16 @@ def main(argv=None) -> int:
             perms["deny"] = list(perms.get("deny") or [])
             perms["deny"] += [t.strip() for t in args.disallowed_tools.split(",") if t.strip()]
         cfg.permissions = perms
+
+    # debug 日志：MINICODE_DEBUG=1 或 cfg.debug 时写入 ~/.minicode/debug.log
+    if os.environ.get("MINICODE_DEBUG") or cfg.debug:
+        import logging
+        logging.basicConfig(
+            filename=str(Path.home() / ".minicode" / "debug.log"),
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s")
+        logging.getLogger("minicode").debug(
+            "startup: model=%s provider=%s mode=%s", cfg.model, cfg.provider, cfg.mode)
 
     provider = make_provider(cfg)
     mcp_manager = McpManager(cfg.mcp_servers, cwd)
@@ -1309,7 +1325,6 @@ def main(argv=None) -> int:
 
 
 def ui_colored():
-    import sys as _s
     from .ui import USE_COLOR
     return USE_COLOR
 

@@ -48,8 +48,8 @@ class AskUserTool(Tool):
                                allow_other=bool(allow_other))
         if not labels:
             return "User skipped the question. Decide yourself with sensible defaults."
-        custom = [l for l in labels if not any(
-            isinstance(o, dict) and o.get("label") == l for o in options)]
+        custom = [lb for lb in labels if not any(
+            isinstance(o, dict) and o.get("label") == lb for o in options)]
         if custom:
             return "User custom answer: " + "; ".join(custom)
         return "User selected: " + "; ".join(labels)

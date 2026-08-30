@@ -1,7 +1,6 @@
 """exit_plan tool: the model presents its plan for approval (Claude Code parity)."""
 from __future__ import annotations
 
-import json
 
 from .base import Tool, ToolContext, ToolError
 

@@ -228,7 +228,8 @@ class EditFileTool(Tool):
         new = str(args.get("new_string") or "")
         ol = old.splitlines() or ["(empty)"]
         nl = new.splitlines() or ["(empty)"]
-        lines = ["- " + l for l in ol[:20]] + ["+ " + l for l in nl[:20]]
+        lines = (["- " + x for x in ol[:20]]
+                  + ["+ " + x for x in nl[:20]])
         if len(ol) > 20:
             lines.append(f"- … ({len(ol) - 20} more)")
         if len(nl) > 20:

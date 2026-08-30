@@ -55,7 +55,6 @@ def _parse(path: Path) -> Tuple[str, str, str]:
 def skills_catalog(cwd) -> Dict[str, Tuple[str, str]]:
     """name -> (description, source_label), project overrides bundled."""
     catalog: Dict[str, Tuple[str, str]] = {}
-    labels = ["内置", "用户", "项目"]
     for label, d in zip(["内置", "用户", "项目"], _skill_dirs(cwd)):
         if not d.is_dir():
             continue
