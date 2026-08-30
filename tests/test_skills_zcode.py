@@ -24,12 +24,12 @@ def make_ctx(tmp_path):
                        agent_factory=None)
 
 
-def make_agent(tmp_path, provider, mode="yolo", hooks=None) -> Agent:
+def make_agent(tmp_path, provider, mode="yolo", hooks=None, ui=None) -> Agent:
     cfg = Config(provider="fake", api_key="", model="fake", mode=mode,
                  hooks=hooks or {})
     cfg.cwd = tmp_path
     session = Session()
-    return Agent(provider, session, UI(), cfg,
+    return Agent(provider, session, ui or UI(), cfg,
                  build_registry(ShellState(tmp_path, "bash")),
                  checkpoints=CheckpointManager(tmp_path / "ck"))
 
@@ -96,18 +96,30 @@ def test_exit_plan_allowed_prompts(tmp_path):
 
 def test_plan_allowed_prompts_authorize_in_accept_edits(tmp_path):
     # simulate: plan approved -> rules active; accept-edits auto-approves edits,
-    # but bash normally needs confirm. The plan rule must auto-approve pytest.
+    # but bash normally needs confirm. The plan rule must auto-approve matching
+    # commands WITHOUT asking, and the command must actually run.
+    class ConfirmSpyUI(UI):
+        def __init__(self):
+            super().__init__()
+            self.confirms = []
+
+        def confirm(self, title, preview=None):
+            self.confirms.append(title)
+            return "n"
+
+    ui = ConfirmSpyUI()
     script = [
         {"tool_calls": [{"id": "t", "name": "bash",
-                         "args": json.dumps({"command": "pytest -q"})}]},
+                         "args": json.dumps({"command": "echo plan-rule-ok"})}]},
         {"text": "verified"},
     ]
-    agent = make_agent(tmp_path, FakeProvider(script), mode="accept-edits")
-    agent.session.plan_allowed_rules.append("Bash(pytest *)")
-    agent.run_turn("run tests")
+    agent = make_agent(tmp_path, FakeProvider(script), mode="accept-edits", ui=ui)
+    agent.session.plan_allowed_rules.append("Bash(echo *)")
+    agent.run_turn("run")
     tool_msg = agent.session.messages[2]
-    assert "pytest" in tool_msg["content"]
+    assert "plan-rule-ok" in tool_msg["content"]   # command actually ran
     assert not tool_msg["is_error"]
+    assert ui.confirms == []                       # plan rule bypassed confirmation
 
 
 def test_rule_matches_pytest_rule():
