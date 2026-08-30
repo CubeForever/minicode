@@ -99,10 +99,31 @@ minicode 对"任意 OpenAI 兼容端点/模型"做了系统性适配，全部机
 
 换任意模型的三步：`export OPENAI_BASE_URL=...` → `minicode --probe` 看四项探测 → `--yolo` 开干。thinking 模型（DeepSeek/GLM/o 系）的思考流、`reasoning_effort`、`max_tokens` 差异都已处理。
 
+## 下载安装
+
+**方式一：一条命令安装（推荐，无需克隆）**
+
+```bash
+pip install git+https://github.com/CubeForever/minicode.git
+```
+
+装完在任意目录可用 `minicode` 或 `python -m minicode`。升级 `pip install -U git+...`；卸载 `pip uninstall minicode`（配置与历史会话保留）。
+
+**方式二：克隆源码（便于参与贡献 / 用最新代码）**
+
+```bash
+git clone https://github.com/CubeForever/minicode.git
+cd minicode
+pip install -e .[dev]        # [dev] 额外装 pytest；python -m pytest tests -q 验证
+```
+
+**前置要求**：Python ≥ 3.9（Windows / macOS / Linux 均可；Windows 装 Git 即自带所需的 bash）。
+**没有 Python？** 从 python.org 或 Microsoft Store 装 3.10+ 即可——本项目零第三方依赖。
+**不想装？** Download ZIP 解压后在解压目录内 `python -m minicode` 也能跑。
+
 ## 快速开始
 
 ```bash
-pip install -e .            # 可选；也可直接 python -m minicode
 
 # OpenAI 兼容（例：智谱 GLM）
 export OPENAI_API_KEY=你的密钥
