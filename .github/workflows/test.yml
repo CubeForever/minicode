@@ -16,7 +16,23 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install pytest pytest-cov
-      - run: python -m pytest tests -q --cov=minicode --cov-report=term
+      - run: pip install .
+      - name: run tests (captured)
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest tests -q --cov=minicode --cov-report=term 2>&1 | tee pytest.log
+      - name: debug summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### environment"
+            python --version 2>&1
+            pip list 2>/dev/null | grep -iE "pytest|cov|coverage|ruff" || true
+            echo "### pytest output (tail 150)"
+            tail -n 150 pytest.log 2>/dev/null || echo "(no log)"
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: python -m minicode --version
       - name: offline smoke (fake LLM)
         shell: bash
