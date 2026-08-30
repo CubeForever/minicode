@@ -52,6 +52,17 @@ def test_bash_guard_reasons():
     assert bash_guard_reason("echo hi > out.txt") is None   # no sensitive path
 
 
+
+def test_bash_guard_ignores_benign_fd_redirections():
+    cmd = ('cd "D:\proj" && ls -la && echo "---PYTHON---" && python --version 2>&1 '
+           '&& echo "---FILES---" && find . -type f -not -path "./.git/*" '
+           '2>/dev/null | head -50')
+    assert bash_guard_reason(cmd) is None          # 实录中的误报命令
+    assert bash_guard_reason("grep x .git/config 2>/dev/null") is None
+    assert bash_guard_reason("rm -rf .git 2>/dev/null") is not None
+    assert bash_guard_reason("echo x > .env 2>&1") is not None  # 真写入仍拦截
+
+
 def test_guard_blocks_even_in_yolo_noninteractive(tmp_path):
     # under pytest stdin is not a tty -> yolo + sensitive path = auto-decline
     script = [

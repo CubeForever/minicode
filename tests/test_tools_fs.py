@@ -73,6 +73,16 @@ def test_grep_and_glob(ctx):
     assert "src/app.py" in gl and "src/util.py" in gl
 
 
+
+def test_glob_brace_expansion(ctx):
+    WriteFileTool().run({"path": "a.py", "content": "x"}, ctx)
+    WriteFileTool().run({"path": "b.md", "content": "y"}, ctx)
+    WriteFileTool().run({"path": "c.txt", "content": "z"}, ctx)
+    out = GlobTool().run({"pattern": "*.{py,md}"}, ctx)
+    assert "a.py" in out and "b.md" in out
+    assert "c.txt" not in out
+
+
 def test_list_dir(ctx):
     WriteFileTool().run({"path": "pkg/mod.py", "content": "x\n"}, ctx)
     out = ListDirTool().run({"path": ".", "depth": 2}, ctx)

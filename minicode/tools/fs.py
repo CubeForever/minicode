@@ -273,11 +273,24 @@ class EditFileTool(Tool):
         return f"edited {_rel(ctx, p)}: replaced {n} occurrence(s) of {len(old)} chars"
 
 
+def _expand_braces(pattern: str) -> List[str]:
+    """Expand one-level brace alternation: '**/*.{py,md}' -> ['**/*.py', '**/*.md'].
+    Path.glob does not support braces, but models write them naturally."""
+    m = re.search(r"\{([^{}]+)\}", pattern)
+    if not m:
+        return [pattern]
+    out = []
+    for alt in m.group(1).split(","):
+        out.extend(_expand_braces(pattern[:m.start()] + alt.strip() + pattern[m.end():]))
+    return out
+
+
 class GlobTool(Tool):
     name = "glob"
     kind = "read"
-    description = ("Find files by wildcard pattern (e.g. \"src/**/*.py\"). "
-                   "Results sorted by modification time, newest first.")
+    description = ("Find files by wildcard pattern (e.g. \"src/**/*.py\", braces like "
+                   "\"**/*.{py,md}\" are supported). Results sorted by modification time, "
+                   "newest first.")
     input_schema = {
         "type": "object",
         "properties": {
@@ -300,15 +313,20 @@ class GlobTool(Tool):
         if not root.is_dir():
             raise ToolError("path must be a directory")
         matches = []
-        for p in root.glob(pattern):
-            try:
-                rel = p.relative_to(ctx.cwd)
-            except ValueError:
-                rel = p
-            if set(rel.parts[:-1]) & IGNORED_DIRS:
-                continue
-            if p.is_file():
-                matches.append((_mtime(p), p))
+        seen = set()
+        for pat in _expand_braces(pattern)[:20]:
+            for p in root.glob(pat):
+                if str(p) in seen:
+                    continue
+                seen.add(str(p))
+                try:
+                    rel = p.relative_to(ctx.cwd)
+                except ValueError:
+                    rel = p
+                if set(rel.parts[:-1]) & IGNORED_DIRS:
+                    continue
+                if p.is_file():
+                    matches.append((_mtime(p), p))
         matches.sort(key=lambda t: -t[0])
         if not matches:
             return f"no files match {pattern!r} under {_rel(ctx, root)}"

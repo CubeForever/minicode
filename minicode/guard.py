@@ -45,12 +45,18 @@ def file_guard_reason(path: Path, cwd: Path) -> Optional[str]:
     return None
 
 
+# benign redirections that must NOT count as file writes: 2>&1, 1>&2, 2>/dev/null …
+_BENIGN_REDIRECTS = re.compile(r"\d*>>?\s*/dev/null|\d*\s*>&\s*\d+")
+
+
 def bash_guard_reason(command: str) -> Optional[str]:
     """Gate destructive shell commands that touch sensitive paths.
-    Reading them (cat .env) stays allowed."""
+    Reading stays allowed (cat .env), and benign fd redirections
+    (2>&1, 2>/dev/null) are not treated as writes."""
     if not BASH_SENSITIVE.search(command or ""):
         return None
-    if not BASH_DESTRUCTIVE.search(command or ""):
+    benign = _BENIGN_REDIRECTS.sub("", command)
+    if not BASH_DESTRUCTIVE.search(benign):
         return None
     token = BASH_SENSITIVE.search(command).group(0)
     return f"命令同时涉及敏感路径（{token}）和写/删操作"
