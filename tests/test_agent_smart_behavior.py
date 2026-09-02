@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from minicode.agent import Agent
 from minicode.checkpoints import CheckpointManager
@@ -13,8 +12,7 @@ from minicode.config import Config
 from minicode.fake import FakeProvider
 from minicode.session import Session
 from minicode.tools import build_registry
-from minicode.tools.base import (summarize_result, truncate_middle,
-                                 _summarize_read_file, _summarize_grep,
+from minicode.tools.base import (summarize_result, _summarize_read_file, _summarize_grep,
                                  _summarize_bash, _summarize_listing)
 from minicode.tools.shell import ShellState
 from minicode.ui import UI

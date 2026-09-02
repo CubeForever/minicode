@@ -85,7 +85,8 @@ def append_brain(cwd, kind: str, content: str) -> Tuple[bool, str]:
         out.append("")
     p = brain_path(cwd)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("\n".join(out), encoding="utf-8", newline="")
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write("\n".join(out))
     return True, f"recorded under {name}"
 
 

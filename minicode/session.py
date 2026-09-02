@@ -180,7 +180,8 @@ class Session:
                 out += [f"**result `{m.get('name')}`**"
                         + (" *(error)*" if m.get("is_error") else ""), "",
                         "```", (m.get("content") or ""), "```", ""]
-        path.write_text("\n".join(out), encoding="utf-8", newline="")
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write("\n".join(out))
         return path
 
     # ---------- persistence ----------

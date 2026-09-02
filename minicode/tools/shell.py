@@ -18,6 +18,21 @@ from .base import Tool, ToolContext, ToolError, truncate_middle
 MARKER = "__MCC_PWD__"
 
 
+def find_bash_exe() -> Optional[str]:
+    """Locate a real Git/MSYS bash. On Windows the PATH may resolve ``bash``
+    to the System32 WSL launcher stub, which is useless without WSL — skip it
+    and fall back to known Git for Windows install locations."""
+    w = shutil.which("bash")
+    if w and "system32" not in w.lower():
+        return w
+    for guess in (r"C:\Program Files\Git\bin\bash.exe",
+                  r"C:\Program Files\Git\usr\bin\bash.exe",
+                  r"C:\Program Files (x86)\Git\bin\bash.exe"):
+        if os.path.isfile(guess):
+            return guess
+    return None
+
+
 def detect_shell(configured=None) -> str:
     """Return one of: bash | powershell | cmd."""
     if configured:
@@ -26,7 +41,7 @@ def detect_shell(configured=None) -> str:
             raise ToolError(f"unsupported shell {configured!r} (use bash / powershell / cmd)")
         return s
     if os.name == "nt":
-        if shutil.which("bash"):
+        if find_bash_exe():
             return "bash"
         if shutil.which("powershell") or shutil.which("pwsh"):
             return "powershell"
@@ -154,7 +169,7 @@ class _BaseShellTool(Tool):
                       "__mcc_rc=$?\n"
                       f"printf '\\n{MARKER}%s' \"{inner}\"\n"
                       "exit $__mcc_rc")
-            return [shutil.which("bash") or "bash", "-c", script]
+            return [find_bash_exe() or "bash", "-c", script]
         if sh == "powershell":
             exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
             ps = (f"{command}\n"

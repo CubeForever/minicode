@@ -21,7 +21,9 @@ def save_plan(cwd, text: str) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     body = (f"---\nstatus: in-progress\ncreated: {time.strftime('%Y-%m-%d %H:%M')}\n---\n"
             + text + "\n")
-    p.write_text(body, encoding="utf-8", newline="")
+    # Path.write_text(newline=) 需要 3.10+；用 open() 保持 3.9 兼容
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write(body)
     return p
 
 
@@ -74,6 +76,7 @@ def mark_plan(cwd, index: int, status: str) -> Optional[Path]:
             meta, body = _parse(p)
             meta["status"] = status
             fm = "\n".join(f"{k}: {v}" for k, v in meta.items())
-            p.write_text(f"---\n{fm}\n---\n{body}", encoding="utf-8", newline="")
+            with open(p, "w", encoding="utf-8", newline="") as f:
+                f.write(f"---\n{fm}\n---\n{body}")
             return p
     return None
