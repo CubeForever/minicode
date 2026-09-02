@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.9.2 · 20 个内置工具 · 208 项自动化测试 · 核心约 5800 行可通读源码 · MIT 开源**
+当前状态：**v0.9.2 · 20 个内置工具 · 208 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -28,7 +28,6 @@
 - 提示注入无法被任何外壳 100% 消除——已做门禁/SSRF 封禁/系统提示防御三层缓解，不可信代码库请用 plan/default 模式
 - `serve` 模式本质是以你的用户身份执行命令（仅本机 + token 鉴权），不要暴露到公网
 - bash 无系统级沙箱（Windows 无可移植方案），用敏感路径门禁替代
-- 主要在 Windows 实测，macOS/Linux 有适配但欢迎反馈；Python 3.9 静态合规、运行验证以 3.10+ 为主
 - 对话历史默认明文存于 `~/.minicode/sessions/`（可用 `--no-save` 或配置 `"save_sessions": false` 完全关闭落盘）；图片输入依赖视觉模型；无 vim 键位与图片粘贴
 
 ## 下载安装
@@ -111,6 +110,15 @@ minicode -p "总结项目" --output-format json < task.txt   # headless
 - 命令：`.minicode/commands/<名字>.md`（`$ARGUMENTS` 接参）
 - 子智能体：`.minicode/agents/<名字>.md`（可指定 tools/model）
 - 工具插件：`.minicode/tools/<名字>.py`（函数签名即 schema）
+
+- 工具插件：`.minicode/tools/<名字>.py`（函数签名即 schema）
+
+### 诊断
+
+- `/doctor`：环境自检（Python / shell / API / 记忆文件 / 补全）
+- `--probe` 或 `/probe`：实测端点兼容性（模型列表 / 非流式 / 流式 / 工具调用）
+- 环境变量 `MINICODE_DEBUG=1`：把运行日志写入 `~/.minicode/debug.log`（排查 serve / 远程调用问题时使用）
+- `--no-save` 或配置 `"save_sessions": false`：隐私模式，会话历史完全不落盘
 
 ## 架构
 
