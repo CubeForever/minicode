@@ -92,7 +92,9 @@ def append_brain(cwd, kind: str, content: str) -> Tuple[bool, str]:
 
 class BrainWriteTool(Tool):
     name = "brain_write"
-    kind = "meta"
+    # write 而非 meta：大脑内容会注入后续所有会话的系统提示，是持久化写入，
+    # 不能静默自动批准（提示注入可能借它跨会话存活）。
+    kind = "write"
     description = ("Record a durable fact about this project into the project brain "
                    "(.minicode/BRAIN.md) so every future session inherits it. Kinds: "
                    "fact (how it works, commands, conventions), gotcha (pitfall), "
@@ -111,6 +113,9 @@ class BrainWriteTool(Tool):
 
     def describe_call(self, args: dict) -> str:
         return f"[{args.get('kind')}] {' '.join(str(args.get('content') or '').split())[:80]}"
+
+    def mutated_path(self, args: dict, ctx: ToolContext):
+        return brain_path(ctx.cwd)
 
     def run(self, args: dict, ctx: ToolContext) -> str:
         added, msg = append_brain(ctx.cwd, str(args.get("kind") or ""),

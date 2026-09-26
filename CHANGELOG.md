@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.3 (2026-09-26)
+
+代码审查闭环——补齐信任边界的敞口，收紧两处授权粒度：
+
+安全（P1）：
+- 项目配置 `.minicode.json` 受限字段门禁：`api_key`/`base_url`/`mcpServers`/`hooks`/`permissions`/`verify_command`/`extra_body`/`webfetch_allow_private` 不再自动生效（克隆恶意仓库不再能静默重定向你的 API 流量、改写权限或执行任意命令），首次遇到经项目信任门禁确认后应用；其余安全字段（model/context_limit 等）保持自动生效
+- 信任标记按内容指纹记录：插件文件或受限配置被改动后自动失效并重新询问（旧版信任一次终身有效）
+
+授权与提示注入面（P2）：
+- bash「本次总是」改为按首词前缀授权（批准 `npm install` 只放行 `npm` 开头的命令），且破坏性命令（`rm -rf` 等）即使命中前缀也强制确认
+- `brain_write` 从 meta 改为 write 类：写入项目大脑需确认（防提示注入借大脑跨会话存活）；系统提示注入大脑时标注来源为智能体自动写入、需验证
+- 破坏性命令模式补齐：`curl … | sh` 管道执行远程脚本、`find … -delete`、`… | xargs rm`
+
+工程（P3）：
+- apply_patch 拒绝同一文件的重复段落（原来第二个 Update File 段会静默丢失改动）
+- `~/.minicode/checkpoints/` 自动只保留最新 20 个会话目录
+- 移除 cli.py 模块级全局 `args_state`（--append-system-prompt 走 Config）；serve token 比较改 `hmac.compare_digest`；系统提示构建不再重复调用 git 子进程
+- 新增 17 项测试（受限配置门禁/信任指纹失效/前缀授权/大脑确认/重复段落/检查点清理）
+
 ## 0.9.2 (2026-08-30)
 
 智能体行为优化——让模型更少踩坑、更高效利用上下文：

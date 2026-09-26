@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import dataclasses
+import hashlib
 import json
 import os
 import shutil
@@ -15,8 +16,8 @@ from pathlib import Path
 
 from . import __version__
 from .agent import MODES, Agent
-from .checkpoints import CheckpointManager
-from .config import load_config
+from .checkpoints import CheckpointManager, prune_checkpoint_roots
+from .config import apply_restricted_config, load_config
 from .llm import LLMError, make_provider
 from .mcp import McpManager
 from .prompts import SUBAGENT_PROMPT, REVIEW_PROMPT, build_system_prompt
@@ -167,26 +168,53 @@ def _custom_agents() -> dict:
     return out
 
 
+def _project_trust_fingerprint(plugin_files: list, restricted: dict) -> str:
+    """指纹 = 项目路径 + 每个插件文件的内容 + 受限配置内容。
+    任一第三方内容变化都会使旧信任标记失效，重新询问用户。"""
+    h = hashlib.sha256()
+    h.update(str(Path.cwd().resolve()).encode("utf-8"))
+    for f in sorted(plugin_files):
+        h.update(b"\x00file\x00" + f.name.encode("utf-8"))
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            pass
+    h.update(b"\x00cfg\x00" + json.dumps(restricted, sort_keys=True,
+                                         ensure_ascii=False).encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
 def _project_trust_gate(cfg, ui) -> tuple:
-    """项目自带的插件/钩子是第三方代码：首次遇到必须确认，
-    非交互模式默认不加载（安全默认），信任后写入 ~/.minicode/trusted/。"""
+    """项目自带的插件/钩子/受限配置是第三方内容：首次遇到必须确认，
+    非交互模式默认不加载（安全默认），信任后写入 ~/.minicode/trusted/。
+    信任按内容指纹记录——插件文件或受限配置被改动后会重新询问。"""
     tools_dir = Path.cwd() / ".minicode" / "tools"
-    has_plugins = tools_dir.is_dir() and any(tools_dir.glob("*.py"))
-    project_hooks = cfg.hooks_from_project or {}
-    if not has_plugins and not project_hooks:
+    plugin_files = sorted(tools_dir.glob("*.py")) if tools_dir.is_dir() else []
+    has_plugins = any(plugin_files)
+    restricted = getattr(cfg, "project_restricted", {}) or {}
+    if not has_plugins and not restricted:
         return True, False
-    import hashlib
+    fp = _project_trust_fingerprint(plugin_files, restricted)
     key = hashlib.sha256(str(Path.cwd().resolve()).encode("utf-8")).hexdigest()[:16]
     marker = Path.home() / ".minicode" / "trusted" / f"{key}.json"
     if marker.exists():
-        return True, False
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if data.get("fp") == fp:
+            return True, False  # 内容未变，静默放行
+        # 内容变了（插件被改 / 受限配置变化 / 旧版无指纹标记）→ 重新询问
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        ui.warn("检测到项目自带插件/钩子（第三方代码）。非交互模式默认不加载。")
-        _strip_project_hooks(cfg)
+        ui.warn("检测到项目自带插件/钩子/受限配置（第三方来源）。非交互模式默认不加载。")
+        cfg.project_restricted = {}
         return False, False
-    what = "、".join(x for x in ("插件 (.minicode/tools)" if has_plugins else "",
-                                 "钩子 (project hooks)" if project_hooks else "") if x)
-    ui.warn(f"此项目包含第三方代码：{what}——可能由他人编写，执行前请确认。")
+    what = []
+    if has_plugins:
+        what.append("插件 (.minicode/tools)")
+    if restricted:
+        what.append("受限配置字段 (" + "、".join(sorted(restricted)) + ")")
+    ui.warn(f"此项目包含第三方内容：{'、'.join(what)}——可能由他人编写，执行前请确认。")
     try:
         ans = input(yellow("  信任并加载？[y] 是 / [n] 本次否 ❯ ")).strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -196,20 +224,15 @@ def _project_trust_gate(cfg, ui) -> tuple:
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps(
-                {"trusted": True, "time": time.strftime("%Y-%m-%d %H:%M")}),
+                {"trusted": True, "fp": fp, "time": time.strftime("%Y-%m-%d %H:%M")}),
                 encoding="utf-8")
         except OSError:
             pass
+        apply_restricted_config(cfg)
         return True, True
-    ui.info("已跳过项目插件与钩子（仅本次；下次仍会询问）。")
-    _strip_project_hooks(cfg)
+    ui.info("已跳过项目插件与受限配置（仅本次；下次仍会询问）。")
+    cfg.project_restricted = {}
     return False, False
-
-
-def _strip_project_hooks(cfg):
-    for k, v in (cfg.hooks_from_project or {}).items():
-        if (cfg.hooks or {}).get(k) == v:
-            cfg.hooks.pop(k, None)
 
 
 def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
@@ -219,8 +242,7 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     base_tools = list(build_registry(shell_state).tools.values())
     if mcp_manager is not None:
         base_tools += mcp_manager.connect_all()
-    allow_plugins, _trusted_now = _project_trust_gate(cfg, ui)
-    if allow_plugins:
+    if getattr(cfg, "plugins_allowed", True):
         from .plugins import load_plugin_tools
         plugin_tools, plugin_errors = load_plugin_tools(cfg.cwd)
         base_tools += plugin_tools
@@ -268,7 +290,7 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     from .tools.skills import skills_section_text
     agent.system_prompt = (build_system_prompt(cfg, cfg.cwd, agents)
                            + skills_section_text(cfg.cwd))
-    append = (args_state.get("append_system_prompt") or "") if args_state else ""
+    append = getattr(cfg, "append_system_prompt", "")
     if append:
         agent.system_prompt += "\n\n" + append
     agent.mcp = mcp_manager
@@ -276,8 +298,6 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     agent._custom_agents = agents
     return agent
 
-
-args_state = {}
 
 def _save(agent: Agent) -> None:
     if not getattr(agent.config, "save_sessions", True):
@@ -1159,9 +1179,7 @@ def cyan_cont():
 
 
 def main(argv=None) -> int:
-    global args_state
     args = _parse_args(argv)
-    args_state = vars(args)
     if args.cwd:
         try:
             os.chdir(args.cwd)
@@ -1199,6 +1217,21 @@ def main(argv=None) -> int:
             format="%(asctime)s %(levelname)s %(name)s %(message)s")
         logging.getLogger("minicode").debug(
             "startup: model=%s provider=%s mode=%s", cfg.model, cfg.provider, cfg.mode)
+
+    # 项目信任门禁：第三方插件/钩子/受限配置字段（api_key、base_url、
+    # mcpServers、permissions、verify_command 等）首次遇到必须确认，
+    # 且必须发生在任何网络请求与子进程启动之前。
+    gate_ui = SilentUI() if (args.serve or args.output_format in ("json", "stream-json")) else ui
+    allow_plugins, _trusted_now = _project_trust_gate(cfg, gate_ui)
+    cfg.plugins_allowed = allow_plugins
+    if not cfg.api_key and not os.environ.get("MINICODE_FAKE_LLM", "").strip():
+        # 密钥只来自被拒绝的项目受限配置——按无配置处理
+        from .config import _setup_guide
+        print(_setup_guide())
+        return 2
+
+    # 清理过旧的检查点目录，防止 ~/.minicode/checkpoints 无限膨胀
+    prune_checkpoint_roots(Path.home() / ".minicode" / "checkpoints", keep=20)
 
     provider = make_provider(cfg)
     mcp_manager = McpManager(cfg.mcp_servers, cwd)

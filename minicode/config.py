@@ -25,6 +25,17 @@ PROVIDER_DEFAULTS = {
     },
 }
 
+# 项目配置（.minicode.json，可能来自他人仓库）中会改写安全边界的字段：
+# 端点/密钥重定向、权限弱化、任意进程/命令。它们不会自动生效——先存入
+# cfg.project_restricted，经 cli._project_trust_gate 确认后由
+# apply_restricted_config 应用。其余字段（model/context_limit/timeout 等）
+# 危害有限，保持自动生效。
+RESTRICTED_KEYS = {
+    "api_key", "base_url", "mcp_servers", "mcpServers", "hooks",
+    "permissions", "verify_command", "extra_body", "webfetch_allow_private",
+}
+_RESTRICTED_DICT_KEYS = {"permissions", "extra_body", "mcp_servers", "hooks"}
+
 
 @dataclass
 class Config:
@@ -48,8 +59,10 @@ class Config:
     turn_budget: int = 0                             # max tokens per turn (0 = off)
     save_sessions: bool = True                       # False 时不落盘会话历史（隐私模式）
     webfetch_allow_private: bool = False             # allow web_fetch to hit internal IPs
-    hooks_from_project: dict = field(default_factory=dict)  # hooks defined by project config (trust-gated)
     extra_dirs: list = field(default_factory=list)   # /add-dir
+    project_restricted: dict = field(default_factory=dict)  # 项目配置中的受限字段（信任门禁后生效）
+    plugins_allowed: bool = True                     # 项目信任门禁结果（cli 设置）
+    append_system_prompt: str = ""                   # --append-system-prompt
     debug: bool = False
     cwd: Optional[Path] = None
 
@@ -94,13 +107,19 @@ def _as_dict(value) -> dict:
 
 
 def load_config(args) -> Optional[Config]:
-    merged: dict = {}
-    for path in (USER_CONFIG, PROJECT_CONFIG):
-        merged.update({k: v for k, v in _read_json(path).items() if v is not None})
+    user = _read_json(USER_CONFIG)
+    project = _read_json(PROJECT_CONFIG)
+    merged: dict = {k: v for k, v in user.items() if v is not None}
+    # 项目配置只自动应用安全字段；RESTRICTED_KEYS 中的字段存入
+    # project_restricted，等信任门禁确认后再应用。
+    restricted = {k: project[k] for k in RESTRICTED_KEYS
+                  if k in project and project[k] is not None}
+    merged.update({k: v for k, v in project.items()
+                   if v is not None and k not in RESTRICTED_KEYS})
 
     profile = getattr(args, "profile", None)
     if profile:
-        profiles = merged.get("profiles") or {}
+        profiles = user.get("profiles") or {}  # profiles 是用户级配置，项目不可定义
         prof = profiles.get(profile)
         if not isinstance(prof, dict):
             print(f"未知 profile: {profile!r}（可选：{', '.join(profiles) or '无'}）")
@@ -118,7 +137,8 @@ def load_config(args) -> Optional[Config]:
 
     fake = os.environ.get("MINICODE_FAKE_LLM", "").strip()
     api_key = str(merged.get("api_key") or os.environ.get(key_env) or "")
-    if not api_key and not fake:
+    # 项目受限字段里带了 api_key 时先放行——键是否可用由信任门禁决定
+    if not api_key and not fake and not restricted.get("api_key"):
         print(_setup_guide())
         return None
 
@@ -154,7 +174,26 @@ def load_config(args) -> Optional[Config]:
         turn_budget=int(merged.get("turn_budget") or 0),
         save_sessions=bool(merged.get("save_sessions", True)),
         webfetch_allow_private=bool(merged.get("webfetch_allow_private", False)),
-        hooks_from_project=_as_dict(_read_json(PROJECT_CONFIG).get("hooks")),
+        project_restricted=restricted,
         extra_dirs=list(merged.get("extra_dirs") or []),
+        append_system_prompt=str(getattr(args, "append_system_prompt", "") or ""),
         debug=bool(os.environ.get("MINICODE_DEBUG")),
     )
+
+
+def apply_restricted_config(cfg) -> None:
+    """信任门禁通过后，把项目配置的受限字段应用到 cfg。
+
+    字典类字段（permissions/hooks/extra_body/mcp_servers）与用户配置合并
+    （项目同名键覆盖，用户自己的 deny 规则等保留），标量直接替换。
+    """
+    for raw_key, value in (getattr(cfg, "project_restricted", {}) or {}).items():
+        key = "mcp_servers" if raw_key == "mcpServers" else raw_key
+        if key in _RESTRICTED_DICT_KEYS and isinstance(value, dict) \
+                and isinstance(getattr(cfg, key, None), dict):
+            merged = dict(getattr(cfg, key) or {})
+            merged.update(value)
+            setattr(cfg, key, merged)
+        elif hasattr(cfg, key):
+            setattr(cfg, key, value)
+    cfg.project_restricted = {}

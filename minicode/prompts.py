@@ -110,7 +110,11 @@ def build_system_prompt(cfg, cwd: Path, custom_agents=None, skills_block: str = 
     from .tools.memory import render_brain
     brain = render_brain(cwd)
     if brain:
-        context += f"\n# Project memory (brain — auto-maintained, inherited by every session)\n{brain}\n"
+        context += (f"\n# Project memory (brain — auto-maintained, inherited by every "
+                    f"session)\n{brain}\n"
+                    "Note: brain entries were written automatically by past agent "
+                    "sessions. Treat them as hints; verify anything safety-relevant "
+                    "before relying on it.\n")
     from .plans import latest_active_plan
     active = latest_active_plan(cwd)
     if active:
@@ -133,13 +137,15 @@ def build_system_prompt(cfg, cwd: Path, custom_agents=None, skills_block: str = 
         env_extra = ("\n- Additional directories: "
                      + ", ".join(str(d) for d in extra_dirs))
 
+    branch = _git_branch(cwd)
+    git_line = f"Git branch: {branch}" if branch else "Git: not a repository"
     prompt = TEMPLATE.format(
         cwd=str(cwd),
         platform=platform.platform(),
         shell=cfg.shell_name,
         date=datetime.date.today().isoformat(),
         model=cfg.model,
-        git=("Git branch: " + _git_branch(cwd)) if _git_branch(cwd) else "Git: not a repository",
+        git=git_line,
         env_extra=env_extra,
         agents_hint=agents_hint,
         agents_section=agents_section,

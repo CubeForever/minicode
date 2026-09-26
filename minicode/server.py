@@ -11,6 +11,7 @@ Binds 127.0.0.1 by default. One turn at a time; concurrent requests get 409.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 import threading
@@ -42,7 +43,8 @@ class MinicodeServer:
                 self.wfile.write(body)
 
             def _auth(self) -> bool:
-                return self.headers.get("X-Minicode-Token") == outer.token
+                return hmac.compare_digest(
+                    str(self.headers.get("X-Minicode-Token") or ""), outer.token)
 
             def do_GET(self):
                 if self.path == "/api/health":

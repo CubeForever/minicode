@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.9.2 · 20 个内置工具 · 208 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.9.3 · 20 个内置工具 · 225 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -20,7 +20,7 @@
 
 - **零依赖、全部可读**：核心约 5800 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
 - **不锁定模型**：一个环境变量切换 GLM / DeepSeek / Claude / 本地 Ollama；兼容层在真实中转站联调中打磨，新端点的怪癖大多自动消化
-- **安全边界内建**：敏感路径强制确认（yolo 也不放行）、SSRF 封禁、第三方插件/钩子首次信任确认、危险命令告警
+- **安全边界内建**：敏感路径强制确认（yolo 也不放行）、SSRF 封禁、第三方插件/钩子/项目受限配置首次信任确认（内容变更后重新询问）、危险命令告警
 - **三项独创**（Claude Code / Codex 均无）：项目大脑（Brain）、自检回路（Verify Gate）、圆桌模式（Panel）
 
 ## 局限性（诚实清单）
@@ -145,12 +145,13 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 208 项，覆盖协议解析/工具/安全/全功能链路
+python -m pytest tests -q    # 225 项，覆盖协议解析/工具/安全/全功能链路
 ```
 
 ## 安全与信任边界（使用前必读）
 
 - **提示注入无法被外壳 100% 消除**：已做三层缓解（敏感路径门禁、SSRF 封禁、系统提示防御），不可信代码库请用 plan/default 模式
+- **项目配置 `.minicode.json` 的受限字段需信任确认**：克隆来的项目配置里，`api_key`/`base_url`/`mcpServers`/`hooks`/`permissions`/`verify_command`/`extra_body`/`webfetch_allow_private` 不会自动生效（防止恶意仓库重定向你的 API 流量、弱化权限或执行任意命令）——首次遇到经确认，信任后按内容指纹记录，内容变更会重新询问；`model`/`context_limit`/`timeout` 等安全字段自动生效
 - **`serve` = 以你的身份执行命令**：仅绑定 127.0.0.1 + token 鉴权，切勿暴露公网
 - **对话历史默认明文存于 `~/.minicode/sessions/`**（可用 `--no-save` 或 `"save_sessions": false` 完全关闭落盘）：让模型读过密钥文件就会落盘
 - **第三方插件/钩子是任意代码**：首次遇到强制确认，非交互默认不加载

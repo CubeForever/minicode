@@ -75,6 +75,8 @@ def test_brain_in_system_prompt(tmp_path):
     prompt = build_system_prompt(cfg, tmp_path)
     assert "never touch data/ by hand" in prompt
     assert "brain" in prompt.lower()
+    # 来源标注：大脑条目由智能体自动写入，系统提示必须提醒模型验证
+    assert "written automatically by past agent sessions" in prompt
 
 
 def test_brain_survives_custom_sections(tmp_path):
@@ -98,6 +100,28 @@ def test_agent_writes_brain_via_tool(tmp_path):
     agent = make_agent(tmp_path, FakeProvider(script))
     agent.run_turn("learn")
     assert "make all" in load_brain_text(tmp_path)
+
+
+def test_brain_write_is_a_confirmed_write(tmp_path):
+    """brain_write 是 write 类：default 模式必须确认（防提示注入借大脑跨会话存活）。"""
+    tool = BrainWriteTool()
+    assert tool.kind == "write"
+    ctx = make_ctx(tmp_path)
+    assert tool.mutated_path({"kind": "fact", "content": "x"}, ctx) == brain_path(tmp_path)
+
+    class DenyUI(UI):
+        def confirm(self, title, preview=None):
+            return "n"
+
+    script = [
+        {"tool_calls": [{"id": "t", "name": "brain_write",
+                         "args": json.dumps({"kind": "fact",
+                                             "content": "injected by prompt"})}]},
+        {"text": "ok"},
+    ]
+    agent = make_agent(tmp_path, FakeProvider(script), mode="default", ui=DenyUI())
+    agent.run_turn("learn")
+    assert not brain_path(tmp_path).exists()   # 被拒后没有落盘
 
 
 # ---------- 圆桌模式 ----------

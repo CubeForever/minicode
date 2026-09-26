@@ -87,3 +87,15 @@ class CheckpointManager:
                 fromfile=f"{label} (before)", tofile=f"{label} (now)", lineterm="")
             outs.append((path, "\n".join(diff)))
         return outs
+
+
+def prune_checkpoint_roots(base: Path, keep: int = 20) -> None:
+    """~/.minicode/checkpoints/ 下每个会话一个目录，长期使用会无限累积；
+    只保留最新的 keep 个（按修改时间）。"""
+    try:
+        roots = [d for d in base.iterdir() if d.is_dir()]
+    except OSError:
+        return
+    roots.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    for d in roots[keep:]:
+        shutil.rmtree(d, ignore_errors=True)

@@ -40,6 +40,10 @@ DESTRUCTIVE_PATTERNS = [
     re.compile(r"\b(del\s+/[sq]|rd\s+/s)", re.I),
     re.compile(r"Remove-Item\s+[^;\n|]*-Recurse", re.I),
     re.compile(r"\b(mkfs|dd\s+if=|shutdown|reboot)\b", re.I),
+    re.compile(r"\b(curl|wget|irm|invoke-webrequest|iwr)\b[^|;\n]*"
+               r"\|\s*(?:sudo\s+)?(?:ba|z|da|fi)?sh\b", re.I),  # curl … | sh
+    re.compile(r"\bfind\b[^;|\n]*-delete\b", re.I),              # find … -delete
+    re.compile(r"\bxargs\b[^;|\n]*\brm\b", re.I),                # … | xargs rm
 ]
 
 # Extended-thinking keyword budgets (same idea as Claude Code)
@@ -410,6 +414,30 @@ class Agent:
         ans = self.ui.confirm(f"⚠ {reason}", tool.preview(args, self.ctx))
         return (ans in ("y", "a")), ""
 
+    @staticmethod
+    def _is_destructive(args: dict) -> bool:
+        command = str(args.get("command") or "")
+        return any(p.search(command) for p in DESTRUCTIVE_PATTERNS)
+
+    @staticmethod
+    def _bash_prefix(args: dict) -> str:
+        parts = str(args.get("command") or "").strip().split()
+        return parts[0] if parts else ""
+
+    def _auto_approved_matches(self, tool, args: dict) -> bool:
+        """'a'（本次总是）的记录：普通工具按 kind，bash 按首词前缀
+        （`bash:npm` 匹配 npm 开头的命令），避免批准一条命令放行所有命令。"""
+        if tool.kind in self.session.auto_approved:
+            return True
+        if tool.name == "bash":
+            command = str(args.get("command") or "").strip()
+            for entry in self.session.auto_approved:
+                if entry.startswith("bash:"):
+                    pfx = entry[5:]
+                    if command == pfx or command.startswith(pfx + " "):
+                        return True
+        return False
+
     def _authorized(self, tool, args: dict) -> Tuple[bool, str]:
         perms = getattr(self.config, "permissions", {}) or {}
         for rule in (perms.get("deny") or []):   # deny rules are hard blocks, even in yolo
@@ -421,11 +449,9 @@ class Agent:
             return self._guard_confirm(f"敏感路径保护：{guard}", tool, args)
         # full-access: everything runs automatically, except high-risk operations
         if self.mode in ("full-access", "yolo"):
-            if tool.name == "bash":
-                command = str(args.get("command") or "")
-                if any(p.search(command) for p in DESTRUCTIVE_PATTERNS):
-                    return self._guard_confirm(
-                        "高危操作：检测到破坏性命令，需要你本人确认", tool, args)
+            if tool.name == "bash" and self._is_destructive(args):
+                return self._guard_confirm(
+                    "高危操作：检测到破坏性命令，需要你本人确认", tool, args)
             return True, ""
         if tool.kind in AUTO_KINDS:
             return True, ""
@@ -437,13 +463,20 @@ class Agent:
         for rule in (perms.get("allow") or []):
             if rule_matches(rule, tool, args):
                 return True, ""
-        if tool.kind in self.session.auto_approved:
+        if self._auto_approved_matches(tool, args):
+            if tool.name == "bash" and self._is_destructive(args):
+                # 前缀预授权不放行破坏性命令（如批准了 npm，git push -f 仍要确认）
+                return self._guard_confirm(
+                    "高危操作：检测到破坏性命令，需要你本人确认", tool, args)
             return True, ""
         if self.mode == "accept-edits" and tool.kind in WRITE_KINDS:
             return True, ""
         ans = self.ui.confirm(f"允许 {tool.name}？", tool.preview(args, self.ctx))
         if ans == "a":
-            self.session.auto_approved.add(tool.kind)
+            if tool.name == "bash":
+                self.session.auto_approved.add(f"bash:{self._bash_prefix(args)}")
+            else:
+                self.session.auto_approved.add(tool.kind)
             return True, ""
         return (ans == "y"), ""
 

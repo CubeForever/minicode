@@ -147,7 +147,13 @@ class ApplyPatchTool(Tool):
         resolved = [(_resolve(ctx, o["path"]), o) for o in ops]
 
         # validate first: no partial application on failure
+        seen_paths = set()
         for p, o in resolved:
+            if p in seen_paths:
+                raise ToolError(
+                    f"{o['path']}: duplicate file section in one patch — combine all "
+                    "changes under a single Update File section with multiple hunks")
+            seen_paths.add(p)
             if o["action"] == "add" and p.exists():
                 raise ToolError(f"{o['path']}: already exists (use Update File)")
             if o["action"] in ("update", "delete") and not p.exists():
