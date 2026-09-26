@@ -1,9 +1,22 @@
-/* minicode web — 原生 JS，无构建、无依赖 */
+/* minicode web — 原生 JS，无构建、无依赖。DeepSeek 风格渲染层。 */
 "use strict";
 
 const TOKEN = "__TOKEN__";
 const $ = (s, el) => (el || document).querySelector(s);
 const chat = $("#chat");
+
+/* ---------------- 主题 ---------------- */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("minicode-theme", t); } catch (e) { /* 隐私模式忽略 */ }
+}
+applyTheme((() => {
+  try { return localStorage.getItem("minicode-theme") || "light"; }
+  catch (e) { return "light"; }
+})());
+$("#btnTheme").addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+});
 
 /* ---------------- markdown 渲染（自研，安全转义优先） ---------------- */
 function esc(s) {
@@ -20,6 +33,19 @@ function inlineMd(raw) {
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
   return s;
 }
+function splitRow(l) {
+  l = l.trim();
+  if (l.startsWith("|")) l = l.slice(1);
+  if (l.endsWith("|")) l = l.slice(0, -1);
+  return l.split("|").map(c => c.trim());
+}
+function buildTable(header, rows) {
+  if (header.length < 2) return null;
+  const th = header.map(h => `<th>${inlineMd(h)}</th>`).join("");
+  const trs = rows.map(r =>
+    `<tr>${r.map(c => `<td>${inlineMd(c)}</td>`).join("")}</tr>`).join("");
+  return `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+}
 function mdBlocks(text) {
   const lines = String(text).split("\n");
   const out = [];
@@ -34,7 +60,8 @@ function mdBlocks(text) {
       list = null;
     }
   };
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     let m;
     if (!line.trim()) { flushP(); flushL(); continue; }
     if ((m = line.match(/^(#{1,4})\s+(.*)/))) {
@@ -45,6 +72,22 @@ function mdBlocks(text) {
       flushP(); flushL(); out.push("<hr>");
     } else if ((m = line.match(/^>\s?(.*)/))) {
       flushP(); flushL(); out.push(`<blockquote>${inlineMd(m[1])}</blockquote>`);
+    } else if (line.includes("|") && i + 1 < lines.length
+               && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+      const t = buildTable(splitRow(line), []);
+      if (t) {                                   // GFM 表格
+        flushP(); flushL();
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+          rows.push(splitRow(lines[i]));
+          i++;
+        }
+        i--;
+        out.push(buildTable(splitRow(line), rows));
+      } else {
+        para.push(line.trim());
+      }
     } else if ((m = line.match(/^\s*[-*]\s+(.+)/))) {
       flushP();
       if (!list || list.tag !== "ul") { flushL(); list = { tag: "ul", items: [] }; }
@@ -89,7 +132,7 @@ function el(tag, cls, html) {
 function hideHero() { const h = $("#hero"); if (h) h.remove(); }
 function scrollDown(force) {
   const m = $("main");
-  const near = m.scrollHeight - m.scrollTop - m.clientHeight < 140;
+  const near = m.scrollHeight - m.scrollTop - m.clientHeight < 160;
   if (near || force) m.scrollTop = m.scrollHeight;
 }
 
@@ -99,48 +142,102 @@ function addUser(text) {
   scrollDown(true);
 }
 
-/* 助手流式消息：thinking 折叠块 + markdown 正文 */
-let current = null;   // {el, body, think, raw, thinkRaw, timer}
+/* ---------------- 流光占位（思考中 / 执行中） ---------------- */
+let shimmerEl = null;
+function showShimmer(label) {
+  hideHero();
+  if (shimmerEl) { shimmerEl.querySelector(".shimmer").textContent = label; return; }
+  shimmerEl = el("div", "shimmer-row", `<span class="shimmer">${esc(label)}</span>`);
+  chat.appendChild(shimmerEl);
+  scrollDown();
+}
+function hideShimmer() {
+  if (shimmerEl) { shimmerEl.remove(); shimmerEl = null; }
+}
+
+/* ---------------- 助手消息（思考面板 + markdown 正文） ---------------- */
+let current = null;   // {el, md, think, thinkBody, thinkStart, thinkDone, raw, timer}
 function newAssistant() {
   const wrap = el("div", "msg assistant");
+  wrap.appendChild(el("div", "assistant-head",
+    `<span class="assistant-logo"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>`));
   const mdEl = el("div", "md");
   wrap.appendChild(mdEl);
   chat.appendChild(wrap);
-  current = { el: wrap, md: mdEl, raw: "", think: null, thinkRaw: "", timer: null };
+  current = { el: wrap, md: mdEl, think: null, thinkStart: 0, thinkDone: false,
+              raw: "", timer: null };
   current.timer = setInterval(() => {
-    if (current && current.dirty) { current.dirty = false; current.md.innerHTML = md(current.raw); }
+    if (current && current.dirty) {
+      current.dirty = false;
+      current.md.innerHTML = md(current.raw);
+      scrollDown();
+    }
   }, 60);
   return current;
 }
 function closeCurrent() {
   if (!current) return;
   clearInterval(current.timer);
-  if (current.raw) current.md.innerHTML = md(current.raw);
-  if (!current.raw && !current.thinkRaw) current.el.remove();
+  finalizeThink();
+  if (current.raw) {
+    const text = current.raw;                  // 捕获快照：current 即将置空
+    current.md.innerHTML = md(text);
+    addCopyAction(current.el, () => text);
+  }
+  if (!current.raw && !current.think) current.el.remove();
   current = null;
 }
-function streamText(text) {
-  hideHero();
+function addCopyAction(wrap, getText) {
+  const row = el("div", "msg-actions", `<button type="button">复制</button>`);
+  const btn = row.querySelector("button");
+  btn.addEventListener("click", () => {
+    navigator.clipboard.writeText(getText()).then(() => {
+      btn.textContent = "已复制";
+      setTimeout(() => { btn.textContent = "复制"; }, 1200);
+    });
+  });
+  wrap.appendChild(row);
+}
+
+/* ---------------- 深度思考（DeepSeek 式） ---------------- */
+function streamReason(text) {
+  hideShimmer();
   if (!current) newAssistant();
+  if (!current.think) {
+    current.thinkStart = Date.now();
+    current.think = el("div", "thinking open");
+    current.think.innerHTML =
+      `<div class="think-label"><span class="caret">▶</span>` +
+      `<span class="shimmer">深度思考中…</span></div><div class="think-body"></div>`;
+    current.think.querySelector(".think-label").addEventListener("click", () => {
+      if (current && current.thinkDone)
+        current.think.classList.toggle("open");
+    });
+    current.el.insertBefore(current.think, current.md);
+  }
+  current.think.querySelector(".think-body").textContent += text;
+  scrollDown();
+}
+function finalizeThink() {
+  if (!current || !current.think || current.thinkDone) return;
+  current.thinkDone = true;
+  const secs = Math.max(0.1, (Date.now() - current.thinkStart) / 1000).toFixed(1);
+  current.think.querySelector(".think-label").innerHTML =
+    `<span class="caret">▶</span>已深度思考（用时 ${secs} 秒）`;
+  current.think.classList.remove("open");     // 思考完成自动折叠
+}
+
+/* ---------------- 文本流 ---------------- */
+function streamText(text) {
+  hideShimmer();
+  if (!current) newAssistant();
+  finalizeThink();                             // 开始正文后思考面板折叠
   current.raw += text;
   current.dirty = true;
   scrollDown();
 }
-function streamReason(text) {
-  hideHero();
-  if (!current) newAssistant();
-  if (!current.think) {
-    current.think = el("details", "thinking");
-    current.think.open = true;
-    current.think.innerHTML = `<summary>💭 思考过程</summary><div class="think-body"></div>`;
-    current.el.insertBefore(current.think, current.md);
-  }
-  current.thinkRaw += text;
-  current.think.querySelector(".think-body").textContent = current.thinkRaw;
-  scrollDown();
-}
 
-/* 工具卡片 */
+/* ---------------- 工具卡片 ---------------- */
 const TOOL_KIND = {
   read_file: "read", glob: "read", grep: "read", list_dir: "read",
   web_fetch: "read", web_search: "read", bash_output: "read", bash_kill: "read",
@@ -150,26 +247,31 @@ const TOOL_KIND = {
   notebook_edit: "write", brain_write: "write",
   bash: "bash",
 };
+const TOOL_ICON = { read: "读", write: "写", bash: "⌘", meta: "✦", mcp: "插" };
 function kindOf(name) {
   if (String(name).startsWith("mcp__")) return "mcp";
   return TOOL_KIND[name] || "meta";
 }
-let resultQueue = [];   // 等待结果的工具卡片（并行批次按顺序回填）
+let resultQueue = [];
 function oneLine(s) {
   const t = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
   return t.length > 140 ? t.slice(0, 140) + "…" : t;
 }
 function addTool(name, summary) {
   closeCurrent();
+  hideShimmer();
   hideHero();
   const kind = kindOf(name);
-  const card = el("div", `tool-card k-${kind}`);
-  card.innerHTML = `<div class="tool-head"><span class="dot"></span><b>${esc(name)}</b>` +
-    `<span class="summary">${esc(oneLine(summary))}</span></div>` +
+  const card = el("div", "tool-card running");
+  card.innerHTML = `<div class="tool-head">` +
+    `<span class="tool-icon k-${kind}">${TOOL_ICON[kind]}</span>` +
+    `<b>${esc(name)}</b>` +
+    `<span class="summary running-sum">${esc(oneLine(summary))}</span>` +
+    `<span class="chev">▶</span></div>` +
     `<pre class="tool-result" hidden></pre>`;
   card.querySelector(".tool-head").addEventListener("click", () => {
-    const r = card.querySelector(".tool-result");
-    r.hidden = !r.hidden;
+    card.classList.toggle("open");
+    card.querySelector(".tool-result").hidden = !card.classList.contains("open");
   });
   chat.appendChild(card);
   resultQueue.push(card);
@@ -177,19 +279,25 @@ function addTool(name, summary) {
 }
 function attachResult(text) {
   let t = resultQueue.shift();
-  if (!t) {                       // 无排队卡片（如被拒绝的工具调用）→ 回退到最后一张
+  if (!t) {
     const cards = chat.querySelectorAll(".tool-card");
     t = cards.length ? cards[cards.length - 1] : null;
   }
   if (!t) { sysLine("plain", text); return; }
+  t.classList.remove("running");
+  const sum = t.querySelector(".running-sum");
+  if (sum) sum.classList.remove("shimmer");
   const r = t.querySelector(".tool-result");
   const first = !r.textContent;
   r.textContent += (first ? "" : "\n") + text;
-  if (text) r.hidden = false;
+  if (text) {
+    r.hidden = false;
+    if (r.textContent.split("\n").length <= 8) t.classList.add("open"); // 短结果自动展开
+  }
   scrollDown();
 }
 
-/* 系统行 / todos */
+/* ---------------- 系统行 / todos ---------------- */
 function sysLine(kind, text) {
   if (!text) return;
   hideHero();
@@ -206,20 +314,23 @@ function renderTodos(todos) {
   scrollDown();
 }
 
-/* 确认卡片（权限 / 敏感路径 / 高危） */
+/* ---------------- 确认卡片 ---------------- */
 function renderConfirm(id, title, preview) {
   closeCurrent();
+  hideShimmer();
   hideHero();
   const card = el("div", "confirm-card");
   const pv = preview ? preview.split("\n").map(ln => {
     const cls = /^\s*\+/.test(ln) ? "add" : (/^\s*-/.test(ln) ? "del" : "");
     return cls ? `<span class="${cls}">${esc(ln)}</span>` : esc(ln);
   }).join("\n") : "";
-  card.innerHTML = `<div class="confirm-title">⚠ ${esc(title)}</div>` +
+  card.innerHTML = `<div class="confirm-title">` +
+    `<span class="warn-ico">⚠</span>${esc(title)}</div>` +
     (preview ? `<pre class="preview">${pv}</pre>` : "") +
     `<div class="actions">` +
-    `<button data-v="y">允许</button><button data-v="a">本次总是</button>` +
-    `<button data-v="n" class="danger">拒绝</button></div>`;
+    `<button class="btn primary" data-v="y">允许</button>` +
+    `<button class="btn ghost" data-v="a">本次总是</button>` +
+    `<button class="btn danger" data-v="n">拒绝</button></div>`;
   card.addEventListener("click", e => {
     const b = e.target.closest("button");
     if (b) answerAsk(id, b.dataset.v, card);
@@ -228,9 +339,10 @@ function renderConfirm(id, title, preview) {
   scrollDown(true);
 }
 
-/* ask_user 选项卡片 */
+/* ---------------- ask_user 选项卡 ---------------- */
 function renderChoose(id, question, options, multi, allowOther) {
   closeCurrent();
+  hideShimmer();
   hideHero();
   const card = el("div", "choose-card");
   card.innerHTML = `<div class="q">❓ ${esc(question)}</div>`;
@@ -266,7 +378,7 @@ function renderChoose(id, question, options, multi, allowOther) {
     const input = el("input");
     input.type = "text";
     input.placeholder = "其他（自由输入）…";
-    const ok = el("button", "opt", "确定");
+    const ok = el("button", "btn ghost", "确定");
     ok.style.flex = "0 0 auto";
     ok.addEventListener("click", () => {
       const v = input.value.trim();
@@ -314,17 +426,17 @@ async function getStatus() {
 function setBusy(b) {
   document.body.classList.toggle("busy", b);
   $("#btnSend").disabled = b;
-  $("#btnSend").textContent = b ? "⏳" : "➤";
-  if (!b) closeCurrent();
+  if (!b) { hideShimmer(); closeCurrent(); }
+  else showShimmer("思考中…");
 }
 async function refreshStatus() {
   try {
     const s = await getStatus();
     $("#model").textContent = s.model;
-    $("#ctxFill").style.width = Math.min(100, s.context_tokens / (s.context_limit || 1) * 100) + "%";
+    const ratio = s.context_tokens / (s.context_limit || 1);
+    $("#ctxFill").style.width = Math.min(100, ratio * 100) + "%";
     $("#ctxFill").style.background =
-      s.context_tokens / (s.context_limit || 1) > 0.8 ? "var(--red)"
-        : s.context_tokens / (s.context_limit || 1) > 0.5 ? "var(--amber)" : "var(--green)";
+      ratio > 0.8 ? "var(--red)" : ratio > 0.5 ? "var(--amber)" : "var(--green)";
     $("#ctxText").textContent =
       `${fmtTok(s.context_tokens)} / ${fmtTok(s.context_limit)} tok`;
     if (document.activeElement !== $("#modeSel")) $("#modeSel").value = s.mode;
@@ -349,7 +461,7 @@ function connectEvents() {
     try { e = JSON.parse(ev.data); } catch (err) { return; }
     switch (e.t) {
       case "hello": $("#conn").classList.add("on"); break;
-      case "user": closeCurrent(); addUser(e.text); break;
+      case "user": closeCurrent(); hideShimmer(); addUser(e.text); break;
       case "text": streamText(e.text); break;
       case "reason": streamReason(e.text); break;
       case "tool": addTool(e.name, e.summary); break;
@@ -378,19 +490,29 @@ function argsSummary(argsStr) {
     return oneLine(JSON.stringify(o));
   } catch (e) { return oneLine(String(argsStr)); }
 }
+function addHistoryThink(wrap, body, secs) {
+  const think = el("div", "thinking",
+    `<div class="think-label"><span class="caret">▶</span>已深度思考` +
+    (secs ? `（用时 ${secs} 秒）` : "") + `</div><div class="think-body">${esc(body)}</div>`);
+  think.querySelector(".think-label").addEventListener("click", () =>
+    think.classList.toggle("open"));
+  wrap.appendChild(think);
+}
 function renderHistory(data) {
   for (const m of data.messages || []) {
     if (m.role === "user") {
       addUser(typeof m.content === "string" ? m.content : "(多部分内容)");
     } else if (m.role === "assistant") {
+      const wrap = el("div", "msg assistant");
+      wrap.appendChild(el("div", "assistant-head",
+        `<span class="assistant-logo"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>`));
+      if (m.reasoning) addHistoryThink(wrap, m.reasoning);
       if (m.content) {
-        const a = newAssistant();
-        a.raw = m.content;
-        a.dirty = true;
-        a.md.innerHTML = md(m.content);
-        clearInterval(a.timer);
-        current = null;
+        const mdEl = el("div", "md", md(m.content));
+        wrap.appendChild(mdEl);
+        addCopyAction(wrap, () => m.content);
       }
+      chat.appendChild(wrap);
       for (const tc of m.tool_calls || []) addTool(tc.name, argsSummary(tc.args));
     } else if (m.role === "tool") {
       const body = typeof m.content === "string" ? m.content
@@ -407,7 +529,7 @@ function renderHistory(data) {
 const input = $("#input");
 function autosize() {
   input.style.height = "auto";
-  input.style.height = Math.min(180, input.scrollHeight) + "px";
+  input.style.height = Math.min(190, input.scrollHeight) + "px";
 }
 input.addEventListener("input", autosize);
 input.addEventListener("keydown", e => {
@@ -428,6 +550,15 @@ $("#modeSel").addEventListener("change", e => api("/api/mode", { mode: e.target.
 $("#btnCompact").addEventListener("click", () => api("/api/compact"));
 $("#btnClear").addEventListener("click", () => {
   if (confirm("开始新会话？（当前上下文将被清空，历史文件改动不受影响）")) api("/api/clear");
+});
+/* 欢迎页建议 chips */
+chat.addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (chip && chip.dataset.prompt) {
+    input.value = chip.dataset.prompt;
+    autosize();
+    send();
+  }
 });
 
 /* 代码复制（事件委托） */

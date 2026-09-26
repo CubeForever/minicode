@@ -14,7 +14,7 @@ def _chunks(text: str, n: int = 24) -> Iterator[str]:
 
 class FakeProvider(Provider):
     """Plays back a scripted list of steps. Each step:
-    {"text": "...", "tool_calls": [{"id","name","args"}]}"""
+    {"reasoning": "...", "text": "...", "tool_calls": [{"id","name","args"}]}"""
 
     name = "fake"
 
@@ -46,6 +46,8 @@ class FakeProvider(Provider):
             self.i += 1
         text = step.get("text") or ""
         tcs = step.get("tool_calls") or []
+        for ch in _chunks(step.get("reasoning") or "", 40):
+            yield {"type": "reasoning_delta", "text": ch}
         for ch in _chunks(text):
             yield {"type": "text_delta", "text": ch}
         for k, tc in enumerate(tcs):
