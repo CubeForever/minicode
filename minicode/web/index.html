@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh" data-theme="light">
+<html lang="zh" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+
+<div class="backdrop" aria-hidden="true"></div>
 
 <header class="topbar">
   <div class="brand">
@@ -43,7 +45,7 @@
   <div id="chat">
     <div id="hero">
       <div class="hero-mark"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-      <h1 class="hero-title">我是 <span class="grad">minicode</span>，很高兴见到你！</h1>
+      <h1 class="hero-title">我是 <span class="grad">minicode</span><br>很高兴见到你。</h1>
       <p class="hero-sub dim">给我一句话，我自己读代码、改代码、跑测试。<br>试试下面的例子，或直接输入你的任务。</p>
       <div class="chips">
         <button class="chip" data-prompt="总结这个项目的目录结构与核心模块，并生成 MINICODE.md">生成项目说明 MINICODE.md</button>
@@ -60,7 +62,7 @@
     <textarea id="input" rows="1" placeholder="给 minicode 下达任务…"></textarea>
     <button id="btnSend" class="send" title="发送">↑</button>
   </div>
-  <div class="hint dim">Enter 发送 · Shift+Enter 换行 · @文件 附加文件 · think / ultrathink 加大思考 · AI 生成内容请仔细核查</div>
+  <div class="hint dim">Enter 发送 · Shift+Enter 换行 · <b>@文件</b> 附加 · <b>think / ultrathink</b> 加大思考 · AI 生成内容请仔细核查</div>
 </footer>
 
 <script src="/app.js"></script>

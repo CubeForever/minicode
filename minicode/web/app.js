@@ -11,8 +11,8 @@ function applyTheme(t) {
   try { localStorage.setItem("minicode-theme", t); } catch (e) { /* 隐私模式忽略 */ }
 }
 applyTheme((() => {
-  try { return localStorage.getItem("minicode-theme") || "light"; }
-  catch (e) { return "light"; }
+  try { return localStorage.getItem("minicode-theme") || "dark"; }
+  catch (e) { return "dark"; }
 })());
 $("#btnTheme").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
@@ -156,7 +156,7 @@ function hideShimmer() {
 }
 
 /* ---------------- 助手消息（思考面板 + markdown 正文） ---------------- */
-let current = null;   // {el, md, think, thinkBody, thinkStart, thinkDone, raw, timer}
+let current = null;   // {el, md, think, thinkStart, thinkDone, raw, timer}
 function newAssistant() {
   const wrap = el("div", "msg assistant");
   wrap.appendChild(el("div", "assistant-head",
@@ -170,10 +170,22 @@ function newAssistant() {
     if (current && current.dirty) {
       current.dirty = false;
       current.md.innerHTML = md(current.raw);
+      placeCaret(current.md);          // 流式打字光标
       scrollDown();
     }
   }, 60);
   return current;
+}
+function placeCaret(mdEl) {
+  mdEl.querySelector(".stream-caret") && mdEl.querySelector(".stream-caret").remove();
+  const walker = document.createTreeWalker(mdEl, NodeFilter.SHOW_TEXT);
+  let last = null;
+  while (walker.nextNode()) {
+    if (walker.currentNode.textContent) last = walker.currentNode;
+  }
+  if (last && last.parentNode) {
+    last.parentNode.insertBefore(el("span", "stream-caret"), last.nextSibling);
+  }
 }
 function closeCurrent() {
   if (!current) return;
@@ -199,13 +211,13 @@ function addCopyAction(wrap, getText) {
   wrap.appendChild(row);
 }
 
-/* ---------------- 深度思考（DeepSeek 式） ---------------- */
+/* ---------------- 深度思考（DeepSeek 式 + 流光边框签名） ---------------- */
 function streamReason(text) {
   hideShimmer();
   if (!current) newAssistant();
   if (!current.think) {
     current.thinkStart = Date.now();
-    current.think = el("div", "thinking open");
+    current.think = el("div", "thinking open active");
     current.think.innerHTML =
       `<div class="think-label"><span class="caret">▶</span>` +
       `<span class="shimmer">深度思考中…</span></div><div class="think-body"></div>`;
@@ -221,6 +233,7 @@ function streamReason(text) {
 function finalizeThink() {
   if (!current || !current.think || current.thinkDone) return;
   current.thinkDone = true;
+  current.think.classList.remove("active");    // 流光边框只在思考时点亮
   const secs = Math.max(0.1, (Date.now() - current.thinkStart) / 1000).toFixed(1);
   current.think.querySelector(".think-label").innerHTML =
     `<span class="caret">▶</span>已深度思考（用时 ${secs} 秒）`;
