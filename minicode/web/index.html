@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minicode web</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <div class="brand">⚡ <b>minicode</b><span id="model" class="model-badge" title="当前模型">…</span></div>
+  <div class="head-right">
+    <div class="ctx" title="上下文占用">
+      <div class="ctxbar"><div id="ctxFill" class="ctxfill"></div></div>
+      <span id="ctxText" class="dim small">…</span>
+    </div>
+    <select id="modeSel" title="权限模式">
+      <option value="default">确认模式</option>
+      <option value="accept-edits">自动接受编辑</option>
+      <option value="plan">计划模式</option>
+      <option value="full-access">完全访问</option>
+    </select>
+    <button id="btnCompact" class="iconbtn" title="压缩上下文（/compact）">🗜</button>
+    <button id="btnClear" class="iconbtn" title="开始新会话（/clear）">🧹</button>
+    <span id="conn" class="conn" title="连接状态"></span>
+  </div>
+</header>
+
+<main id="chat">
+  <div id="hero">
+    <div class="hero-logo">⚡</div>
+    <h1>minicode <span class="dim">web</span></h1>
+    <p class="dim">终端编码智能体，现在跑在浏览器里。给它一句话，它自己读代码、改代码、跑测试。</p>
+    <div class="hero-tips">
+      <div>💡 提示词含 <code>think</code> / <code>ultrathink</code> 自动加大思考预算</div>
+      <div>📎 输入 <code>@文件路径</code> 把文件或图片附加给模型</div>
+      <div>🔐 写文件与命令会弹出确认卡片（可切右上角模式）</div>
+      <div>🖥 斜杠命令与 <code>!命令直通</code> 在终端 REPL 里可用</div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="inputwrap">
+    <textarea id="input" rows="1"
+      placeholder="给 minicode 下达任务…（Enter 发送 · Shift+Enter 换行）"></textarea>
+    <button id="btnSend" class="send" title="发送">➤</button>
+  </div>
+  <div class="hint dim">模型与密钥来自 minicode 配置（~/.minicode.json）· 回合结束后会话自动保存</div>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

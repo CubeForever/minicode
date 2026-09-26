@@ -2,11 +2,12 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.9.3 · 20 个内置工具 · 225 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.10.0 · 20 个内置工具 · 终端 REPL + 浏览器 Web 界面 · 235 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
 - **多轮自主任务**：给它一句话，它自己读代码 → 改代码 → 跑测试 → 汇报结果；流式输出、思考过程可视化、每回合可中断
+- **浏览器 Web 界面**：`minicode --ui` 一条命令在浏览器里获得桌面级体验——暗色聊天流、工具调用卡片、思考折叠、权限确认按钮、模式切换、上下文余量条（仍是零依赖：标准库 HTTP 服务 + 原生前端，无 Node/构建链）
 - **20 个内置工具**：文件读写编辑、多文件补丁（apply_patch）、Jupyter 编辑、glob/grep/list 搜索、bash（含后台进程管理）、子智能体、三视角圆桌、网页抓取/搜索、交互提问、任务清单
 - **四种权限模式**：`default`（写操作逐个确认）→ `accept-edits`（自动接受编辑）→ `plan`（只读调研出计划，批准后实施）→ `full-access`（全自动，仅高危操作需确认）
 - **跨会话记忆**：项目大脑自动沉淀事实/坑/决策/失败教训，失败回合自动复盘入脑，越用越懂你的项目
@@ -68,11 +69,26 @@ MINICODE_FAKE_LLM=demo minicode -p hi --yolo
 
 ```bash
 minicode                        # 交互式 REPL
+minicode --ui                   # 浏览器 Web 界面（自动打开 http://127.0.0.1:8765）
 minicode "修复登录 bug"          # 启动即执行
 minicode -c                     # 恢复上次会话
 minicode --probe                # 实测端点四项能力（装新模型先跑这个）
 minicode -p "总结项目" --output-format json < task.txt   # headless
 ```
+
+### Web 界面（`--ui`）
+
+对标桌面端聊天体验，浏览器打开即用，会话行为与终端 REPL 完全一致（同一套权限门禁、检查点、自检门禁、复盘记忆）：
+
+| 能力 | 说明 |
+|---|---|
+| 流式聊天 | 回复逐字渲染、思考过程可折叠、Markdown/代码块带复制按钮 |
+| 工具卡片 | 每次读写/命令一张卡片，点开看完整输出，按工具类型着色 |
+| 浏览器内确认 | 写文件/命令的 `允许 / 本次总是 / 拒绝` 与 ask_user 选项直接在页面点选 |
+| 模式切换 | 右上角切换 default / accept-edits / plan / full-access |
+| 上下文余量条 | 实时显示 token 占用，🧹 新会话、🗜 压缩一键触达 |
+
+安全边界与 `serve` 模式相同：仅绑定 127.0.0.1、进程内随机 token 注入页面、Host 校验防 DNS rebinding；不要暴露公网。
 
 ### 常用服务商
 
@@ -135,7 +151,9 @@ minicode/
 ├── prompts.py      系统提示词（注入防御 / Git 护栏）
 ├── plugins.py      本地插件加载
 ├── plans.py        计划存档管理
-├── server.py       serve 模式（本地 HTTP API）
+├── server.py       serve 模式（headless 本地 HTTP API）
+├── webui.py        Web 界面（SSE 事件流 + 浏览器内确认）
+├── web/            前端静态资源（原生 HTML/CSS/JS，零构建）
 ├── ui.py           终端渲染 / 余量条 / 确认框
 ├── lineinput.py    Tab 补全（readline）
 ├── fake.py         离线假模型
@@ -145,7 +163,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 225 项，覆盖协议解析/工具/安全/全功能链路
+python -m pytest tests -q    # 235 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

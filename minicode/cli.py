@@ -91,7 +91,9 @@ def _parse_args(argv=None):
                     help="对当前 API 端点做兼容性探测（models/非流式/流式/工具调用）后退出")
     ap.add_argument("--serve", action="store_true",
                     help="以本地 HTTP API 模式运行（127.0.0.1，token 鉴权）")
-    ap.add_argument("--port", type=int, default=8765, help="serve 模式端口（默认 8765）")
+    ap.add_argument("--ui", action="store_true",
+                    help="启动本地 Web 界面（浏览器自动打开，127.0.0.1 + token）")
+    ap.add_argument("--port", type=int, default=8765, help="serve/ui 模式端口（默认 8765）")
     ap.add_argument("--no-save", action="store_true",
                     help="隐私模式：不把会话历史写入磁盘")
     ap.add_argument("-c", "--continue", dest="continue_last", action="store_true",
@@ -1240,6 +1242,24 @@ def main(argv=None) -> int:
 
     if args.probe:
         _print_probe(provider, cfg, ui)
+        return 0
+
+    if args.ui:
+        from .webui import WebUIServer
+        srv = WebUIServer(cfg, provider, mcp_manager=mcp_manager, port=args.port)
+        url = f"http://127.0.0.1:{srv.port}"
+        ui.plain(f"  ⚡ minicode web ui → {url}")
+        ui.plain(gray(f"  token: {srv.token}"))
+        ui.plain(gray("  浏览器即将自动打开；Ctrl+C 停止"))
+        import threading as _threading
+        import webbrowser
+        _threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            mcp_manager.stop_all()
         return 0
 
     if args.serve:

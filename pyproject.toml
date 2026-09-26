@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "minicode"
-version = "0.9.3"
+version = "0.10.0"
 description = "A Claude Code-style terminal coding agent — zero dependencies, works with OpenAI-compatible & Anthropic APIs."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,6 +19,9 @@ minicode = "minicode.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["minicode*"]
+
+[tool.setuptools.package-data]
+minicode = ["web/*"]
 
 [tool.ruff]
 line-length = 100
