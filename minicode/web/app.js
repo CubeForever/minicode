@@ -142,12 +142,13 @@ function addUser(text) {
   scrollDown(true);
 }
 
-/* ---------------- 流光占位（思考中 / 执行中） ---------------- */
+/* ---------------- 工作中占位（三点呼吸） ---------------- */
 let shimmerEl = null;
 function showShimmer(label) {
   hideHero();
-  if (shimmerEl) { shimmerEl.querySelector(".shimmer").textContent = label; return; }
-  shimmerEl = el("div", "shimmer-row", `<span class="shimmer">${esc(label)}</span>`);
+  if (shimmerEl) return;
+  shimmerEl = el("div", "working-row",
+    `<span class="lbl">${esc(label)}</span><span class="dots"><i></i><i></i><i></i></span>`);
   chat.appendChild(shimmerEl);
   scrollDown();
 }
@@ -155,12 +156,14 @@ function hideShimmer() {
   if (shimmerEl) { shimmerEl.remove(); shimmerEl = null; }
 }
 
-/* ---------------- 助手消息（思考面板 + markdown 正文） ---------------- */
+/* ---------------- 助手消息（等宽元数据 + markdown 正文） ---------------- */
 let current = null;   // {el, md, think, thinkStart, thinkDone, raw, timer}
+const nowHM = () => new Date().toTimeString().slice(0, 5);
 function newAssistant() {
   const wrap = el("div", "msg assistant");
-  wrap.appendChild(el("div", "assistant-head",
-    `<span class="assistant-logo"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>`));
+  wrap.appendChild(el("div", "msg-meta",
+    `<span class="who-mark">❯</span><span class="who">minicode</span>` +
+    `<span class="ts">${nowHM()}</span>`));
   const mdEl = el("div", "md");
   wrap.appendChild(mdEl);
   chat.appendChild(wrap);
@@ -211,7 +214,7 @@ function addCopyAction(wrap, getText) {
   wrap.appendChild(row);
 }
 
-/* ---------------- 深度思考（DeepSeek 式 + 流光边框签名） ---------------- */
+/* ---------------- 思考面板（三点呼吸 + 等宽计时） ---------------- */
 function streamReason(text) {
   hideShimmer();
   if (!current) newAssistant();
@@ -219,8 +222,8 @@ function streamReason(text) {
     current.thinkStart = Date.now();
     current.think = el("div", "thinking open active");
     current.think.innerHTML =
-      `<div class="think-label"><span class="caret">▶</span>` +
-      `<span class="shimmer">深度思考中…</span></div><div class="think-body"></div>`;
+      `<div class="think-label"><span class="caret">▶</span>思考中` +
+      `<span class="dots"><i></i><i></i><i></i></span></div><div class="think-body"></div>`;
     current.think.querySelector(".think-label").addEventListener("click", () => {
       if (current && current.thinkDone)
         current.think.classList.toggle("open");
@@ -233,10 +236,10 @@ function streamReason(text) {
 function finalizeThink() {
   if (!current || !current.think || current.thinkDone) return;
   current.thinkDone = true;
-  current.think.classList.remove("active");    // 流光边框只在思考时点亮
+  current.think.classList.remove("active");
   const secs = Math.max(0.1, (Date.now() - current.thinkStart) / 1000).toFixed(1);
   current.think.querySelector(".think-label").innerHTML =
-    `<span class="caret">▶</span>已深度思考（用时 ${secs} 秒）`;
+    `<span class="caret">▶</span>已深度思考 · ${secs}s`;
   current.think.classList.remove("open");     // 思考完成自动折叠
 }
 
@@ -439,8 +442,8 @@ async function getStatus() {
 function setBusy(b) {
   document.body.classList.toggle("busy", b);
   $("#btnSend").disabled = b;
-  if (!b) { hideShimmer(); closeCurrent(); }
-  else showShimmer("思考中…");
+  if (!b) { hideShimmer(); closeCurrent(); refreshSessions(); }
+  else showShimmer("minicode 正在工作");
 }
 async function refreshStatus() {
   try {
@@ -449,9 +452,11 @@ async function refreshStatus() {
     const ratio = s.context_tokens / (s.context_limit || 1);
     $("#ctxFill").style.width = Math.min(100, ratio * 100) + "%";
     $("#ctxFill").style.background =
-      ratio > 0.8 ? "var(--red)" : ratio > 0.5 ? "var(--amber)" : "var(--green)";
+      ratio > 0.8 ? "var(--err)" : ratio > 0.5 ? "var(--warn)" : "var(--dim)";
     $("#ctxText").textContent =
       `${fmtTok(s.context_tokens)} / ${fmtTok(s.context_limit)} tok`;
+    $("#usage").textContent =
+      `ctx ${fmtTok(s.context_tokens)} · in ${fmtTok(s.usage.input)} · out ${fmtTok(s.usage.output)}`;
     if (document.activeElement !== $("#modeSel")) $("#modeSel").value = s.mode;
     setBusy(s.busy);
   } catch (e) { /* 服务未就绪时静默 */ }
@@ -467,13 +472,14 @@ function fmtTok(n) {
 /* ---------------- SSE 事件流 ---------------- */
 function connectEvents() {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}`);
-  es.onopen = () => $("#conn").classList.add("on");
-  es.onerror = () => $("#conn").classList.remove("on");
+  const connText = $("#connText");
+  es.onopen = () => { $("#conn").classList.add("on"); connText.textContent = "已连接"; };
+  es.onerror = () => { $("#conn").classList.remove("on"); connText.textContent = "重连中…"; };
   es.onmessage = ev => {
     let e;
     try { e = JSON.parse(ev.data); } catch (err) { return; }
     switch (e.t) {
-      case "hello": $("#conn").classList.add("on"); break;
+      case "hello": $("#conn").classList.add("on"); connText.textContent = "已连接"; break;
       case "user": closeCurrent(); hideShimmer(); addUser(e.text); break;
       case "text": streamText(e.text); break;
       case "reason": streamReason(e.text); break;
@@ -517,8 +523,8 @@ function renderHistory(data) {
       addUser(typeof m.content === "string" ? m.content : "(多部分内容)");
     } else if (m.role === "assistant") {
       const wrap = el("div", "msg assistant");
-      wrap.appendChild(el("div", "assistant-head",
-        `<span class="assistant-logo"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>`));
+      wrap.appendChild(el("div", "msg-meta",
+        `<span class="who-mark">❯</span><span class="who">minicode</span>`));
       if (m.reasoning) addHistoryThink(wrap, m.reasoning);
       if (m.content) {
         const mdEl = el("div", "md", md(m.content));
@@ -558,12 +564,52 @@ async function send() {
   catch (e) { /* 错误已由 api() 展示 */ }
 }
 
-/* 头部按钮 */
+/* 头部 / 侧边栏按钮 */
 $("#modeSel").addEventListener("change", e => api("/api/mode", { mode: e.target.value }));
 $("#btnCompact").addEventListener("click", () => api("/api/compact"));
-$("#btnClear").addEventListener("click", () => {
+$("#btnNew").addEventListener("click", () => {
   if (confirm("开始新会话？（当前上下文将被清空，历史文件改动不受影响）")) api("/api/clear");
 });
+$("#btnMenu").addEventListener("click", () => document.body.classList.toggle("side-open"));
+$("#sideMask").addEventListener("click", () => document.body.classList.remove("side-open"));
+
+/* ---------------- 侧边栏：历史会话 ---------------- */
+let activeSession = null;
+async function refreshSessions() {
+  try {
+    const d = await fetch("/api/sessions",
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    const box = $("#sessions");
+    if (!d.sessions || !d.sessions.length) {
+      box.innerHTML = `<div class="side-empty">暂无历史会话</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    for (const s of d.sessions) {
+      const b = el("button", "sess" + (s.name === activeSession ? " active" : ""),
+        `<span class="sess-title">${esc(s.title)}</span>` +
+        `<span class="sess-time mono">${esc(s.time)}</span>`);
+      b.addEventListener("click", () => openSession(s.name));
+      box.appendChild(b);
+    }
+  } catch (e) { /* 服务未就绪时静默 */ }
+}
+async function openSession(name) {
+  if (document.body.classList.contains("busy")) return;
+  try {
+    await api("/api/session/open", { name });
+    activeSession = name;
+    document.body.classList.remove("side-open");
+    const hist = await fetch("/api/messages",
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    chat.innerHTML = "";
+    renderHistory(hist);
+    hideHero();
+    refreshSessions();
+    scrollDown(true);
+  } catch (e) { /* 错误已由 api() 展示 */ }
+}
+
 /* 欢迎页建议 chips */
 chat.addEventListener("click", e => {
   const chip = e.target.closest(".chip");
@@ -596,6 +642,7 @@ chat.addEventListener("click", e => {
       if ((hist.messages || []).length) hideHero();
     }
   } catch (e) { /* 忽略 */ }
+  refreshSessions();
   connectEvents();
   refreshStatus();
   setInterval(refreshStatus, 2500);

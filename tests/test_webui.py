@@ -9,6 +9,7 @@ import pytest
 
 from minicode.config import Config
 from minicode.fake import FakeProvider
+from minicode.session import Session
 from minicode.webui import WebBridgeUI, WebUIServer
 
 
@@ -119,6 +120,7 @@ def test_webui_serves_static_and_requires_token(tmp_path):
         base = f"http://127.0.0.1:{srv.port}"
         html = get(base, "/").read().decode("utf-8")
         assert "minicode" in html
+        assert "v__VERSION__" not in html              # 版本号已注入
         js = get(base, "/app.js").read().decode("utf-8")
         assert srv.token in js and "__TOKEN__" not in js  # token 注入到 app.js
         health = json.load(get(base, "/api/health"))
@@ -128,6 +130,37 @@ def test_webui_serves_static_and_requires_token(tmp_path):
         assert ei.value.code == 401                      # 无 token 拒绝
         s = json.load(get(base, "/api/status", token=srv.token))
         assert s["model"] == "fake" and s["busy"] is False
+
+
+def test_webui_sessions_list_and_open(tmp_path, monkeypatch):
+    """侧边栏：列出历史会话 + 打开会话回放 + 名字防路径穿越。"""
+    from minicode import session as session_mod
+    saved = tmp_path / "saved"
+    saved.mkdir()
+    monkeypatch.setattr(session_mod, "SESSIONS_DIR", saved)
+    Session(messages=[{"role": "user", "content": "旧任务"},
+                      {"role": "assistant", "content": "已完成"}]) \
+        .save(saved / "20260926-120000_old-task.json")
+
+    srv = make_server(tmp_path, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        d = json.load(get(base, "/api/sessions", token=srv.token))
+        assert d["sessions"] and d["sessions"][0]["name"] == "20260926-120000_old-task"
+        assert d["sessions"][0]["title"] == "old-task"
+
+        r = json.load(post(base, "/api/session/open",
+                           {"name": "20260926-120000_old-task"}, token=srv.token))
+        assert r["ok"] and r["messages"] == 2
+        msgs = json.load(get(base, "/api/messages", token=srv.token))["messages"]
+        assert msgs[0]["content"] == "旧任务"
+
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            post(base, "/api/session/open", {"name": "../evil"}, token=srv.token)
+        assert ei.value.code == 400                    # 路径穿越被拒
+        with pytest.raises(urllib.error.HTTPError) as ei2:
+            post(base, "/api/session/open", {"name": "no-such"}, token=srv.token)
+        assert ei2.value.code == 404
 
 
 def test_webui_rejects_non_local_host(tmp_path):

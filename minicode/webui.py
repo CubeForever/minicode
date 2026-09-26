@@ -16,6 +16,7 @@ import json
 import re
 import secrets
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +24,7 @@ from queue import Empty, Queue
 from typing import List
 from urllib.parse import parse_qs, urlparse
 
+from . import session as session_mod
 from .agent import MODES
 from .session import Session
 from .ui import UI
@@ -236,12 +238,16 @@ class WebUIServer:
                     s = outer.agent.session
                     return self._json(200, {"messages": s.messages,
                                             "todos": s.todos})
+                if path == "/api/sessions":
+                    return self._json(200, {"sessions": outer._list_sessions()})
                 return self._json(404, {"error": "not found"})
 
             def _static(self, fname: str, ctype: str):
                 page = (WEB_DIR / fname).read_text(encoding="utf-8")
                 if "__TOKEN__" in page:  # 每个进程注入随机 token（占位符在 app.js）
                     page = page.replace("__TOKEN__", outer.token)
+                if "__VERSION__" in page:
+                    page = page.replace("__VERSION__", outer._version())
                 body = page.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
@@ -315,6 +321,22 @@ class WebUIServer:
                     outer.agent.reset_session()
                     outer._emit({"t": "cleared"})
                     return self._json(200, {"ok": True})
+                if path == "/api/session/open":
+                    name = str(body.get("name") or "")
+                    if not re.fullmatch(r"[\w\-]{1,120}", name):
+                        return self._json(400, {"error": "invalid session name"})
+                    path_ = session_mod.SESSIONS_DIR / f"{name}.json"
+                    if not path_.exists():
+                        return self._json(404, {"error": "session not found"})
+                    try:
+                        loaded = Session.load(path_)
+                    except (OSError, ValueError) as e:
+                        return self._json(500, {"error": f"load failed: {e}"})
+                    if outer.busy:
+                        return self._json(409, {"error": "a turn is running"})
+                    outer.agent.replace_session(loaded)
+                    return self._json(200, {"ok": True, "name": name,
+                                            "messages": len(loaded.messages)})
                 if path == "/api/compact":
                     if outer.busy:
                         return self._json(409, {"error": "a turn is running"})
@@ -333,6 +355,21 @@ class WebUIServer:
     def _version() -> str:
         from . import __version__
         return __version__
+
+    @staticmethod
+    def _list_sessions(limit: int = 50) -> list:
+        """~/.minicode/sessions 里的历史会话（新→旧），供侧边栏。"""
+        out = []
+        for p in session_mod.Session.list_sessions(limit):
+            stamp, _, slug = p.stem.partition("_")
+            title = slug if slug and slug != "session" else stamp
+            try:
+                when = time.strftime("%m-%d %H:%M",
+                                     time.localtime(p.stat().st_mtime))
+            except OSError:
+                when = ""
+            out.append({"name": p.stem, "title": title[:60], "time": when})
+        return out
 
     def _emit(self, event: dict) -> None:
         self.bridge._emit(event)
