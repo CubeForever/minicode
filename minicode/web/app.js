@@ -153,6 +153,7 @@ function startTicket(time) {
     `<span class="barcode"></span>` +
     `<span class="tk-stamp mono" hidden></span></div>` +
     `<div class="tk-body"></div>`;
+  // 条码只在工单头部保留为小尺寸品牌细节（CSS 已限宽 64px）
   chat.appendChild(t);
   ticket = { el: t, body: t.querySelector(".tk-body"), err: false };
   return ticket;
