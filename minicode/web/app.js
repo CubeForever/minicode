@@ -766,6 +766,24 @@ async function openExtensions() {
         });
         head.appendChild(rl);
       }
+      if (opts.importCfg) {
+        const imp = el("button", "btn ghost small", "导入");
+        imp.addEventListener("click", async () => {
+          const pick = await api("/api/fs/pick", opts.importCfg.pick);
+          if (pick.error) { sysLine("error", pick.error); return; }
+          const paths = pick.paths || (pick.path ? [pick.path] : []);
+          if (!paths.length) return;   // 用户取消
+          const res = await api("/api/ext/import",
+            { kind: opts.importCfg.kind, paths });
+          if (res.imported && res.imported.length)
+            sysLine("info", "已导入：" + res.imported.join("、"));
+          if (res.skipped && res.skipped.length)
+            sysLine("warn", "跳过 " + res.skipped.length + " 个同名扩展");
+          res.failed && res.failed.forEach(f => sysLine("error", f.error));
+          openExtensions();
+        });
+        head.appendChild(imp);
+      }
       sec.appendChild(head);
       if (!rows.length) { sec.appendChild(el("div", "side-empty", empty)); box.appendChild(sec); return; }
       for (const r of rows) {
@@ -806,20 +824,24 @@ async function openExtensions() {
     section("技能（skill 工具按需加载）",
       d.skills.map(s => ({ name: s.name, desc: s.desc, source: s.source,
                            deletable: s.source !== "内置" })),
-      "没有可用技能——点击右上角 + 新建，或放置 .minicode/skills/<名字>/SKILL.md",
-      { use: true, addType: "skill", delKind: "skill" });
+      "没有可用技能——点击 + 新建，或导入一个含 SKILL.md 的文件夹",
+      { use: true, addType: "skill", delKind: "skill",
+        importCfg: { kind: "skill", pick: { kind: "folder", title: "选择技能文件夹（含 SKILL.md）" } } });
     section("插件工具（.minicode/tools/*.py）",
       d.plugins.map(n => ({ name: n, desc: "本地 Python 插件工具" })),
-      "没有插件——点击右上角 + 新建",
-      { addType: "plugin", delKind: "plugin", reload: true });
+      "没有插件——点击 + 新建，或导入 .py 文件",
+      { addType: "plugin", delKind: "plugin", reload: true,
+        importCfg: { kind: "plugin", pick: { kind: "file", multi: true, ext: [".py"], title: "选择插件文件" } } });
     section("自定义子智能体（.minicode/agents/*.md）",
       d.agents.map(a => ({ name: a.name, desc: a.desc + (a.tools ? ` · tools: ${a.tools}` : "") + (a.model ? ` · model: ${a.model}` : "") })),
       "没有自定义子智能体",
-      { addType: "agent", delKind: "agent" });
+      { addType: "agent", delKind: "agent",
+        importCfg: { kind: "agent", pick: { kind: "file", multi: true, ext: [".md"], title: "选择子智能体文件" } } });
     section("自定义命令（.minicode/commands/*.md）",
       d.commands.map(c => ({ name: c.name, desc: c.desc })),
       "没有自定义命令",
-      { run: true, addType: "command", delKind: "command" });
+      { run: true, addType: "command", delKind: "command",
+        importCfg: { kind: "command", pick: { kind: "file", multi: true, ext: [".md"], title: "选择命令文件" } } });
     section("MCP 服务器（.minicode.json 的 mcpServers）",
       d.mcp.map(m => ({ name: m.server, desc: `${m.status} · ${m.tools} tools${m.error ? " · " + m.error : ""}` })),
       "未配置 MCP 服务器");
@@ -966,15 +988,24 @@ function openExtForm(type) {
   $("#formModal").hidden = false;
 }
 
-$("#btnBrowse").addEventListener("click", () => {
-  browseDir($("#wsPath").title || "", async (picked) => {
+$("#btnBrowse").addEventListener("click", async () => {
+  const r = await api("/api/fs/pick",
+    { kind: "folder", title: "选择工作区文件夹", initial: $("#wsPath").title || "" });
+  if (r.cancelled || (!r.path && !r.error)) return;   // 用户取消
+  const applyWorkspace = async (picked) => {
     try {
       await api("/api/workspace/add", { path: picked });
       await api("/api/workspace/switch", { path: picked });
       $("#wsModal").hidden = true;
       refreshWorkspaces();
     } catch (e) { /* 错误已展示 */ }
-  });
+  };
+  if (r.error) {
+    // 本机缺 tkinter → 回退到网页目录浏览器
+    browseDir($("#wsPath").title || "", applyWorkspace);
+    return;
+  }
+  await applyWorkspace(r.path);
 });
 
 /* API Key 显示 / 隐藏 */

@@ -544,3 +544,72 @@ def test_webui_extensions_endpoint(tmp_path, monkeypatch):
         assert "hello" in d["plugins"]
         assert d["agents"][0]["name"] == "scout" and d["agents"][0]["desc"] == "侦察兵"
         assert [c["name"] for c in d["commands"]] == ["refactor"]
+
+
+# ---------- 目录浏览与扩展直接导入 ----------
+
+def test_webui_fs_list(tmp_path):
+    root = tmp_path / "browse"
+    (root / "sub1").mkdir(parents=True)
+    (root / "sub2").mkdir()
+    (root / ".hidden").mkdir()
+    (root / "file.txt").write_text("x", encoding="utf-8")
+    srv = make_server(tmp_path, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        d = json.load(get(base, "/api/fs/list?path=" +
+                          urllib.request.quote(str(root)), token=srv.token))
+        assert d["path"] == str(root)
+        assert sorted(d["dirs"]) == ["sub1", "sub2"]   # 隐藏目录与文件不出现
+        assert d["parent"] == str(tmp_path)
+        # 相对路径拒绝（错误放 payload，仍 200）
+        d2 = json.load(get(base, "/api/fs/list?path=relative", token=srv.token))
+        assert "error" in d2
+
+
+def test_webui_ext_import(tmp_path, monkeypatch):
+    """直接导入本机文件为扩展：技能文件夹 / 插件 .py / 命令 .md。"""
+    src = tmp_path / "src"
+    (src / "my-skill").mkdir(parents=True)
+    (src / "my-skill" / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: 导入的技能\n---\n步骤。",
+        encoding="utf-8")
+    (src / "tool.py").write_text(
+        'TOOL = {"name": "imported_tool"}\ndef run(args, ctx):\n    return "ok"\n',
+        encoding="utf-8")
+    (src / "greet.md").write_text("---\ndescription: 问候\n---\n你好 $ARGUMENTS",
+                                  encoding="utf-8")
+    (src / "bad.txt").write_text("not an extension", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    srv = make_server(ws, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        # 导入技能文件夹
+        r = json.load(post(base, "/api/ext/import",
+                           {"kind": "skill", "paths": [str(src / "my-skill")]},
+                           token=srv.token))
+        assert r["imported"] == ["my-skill"]
+        assert (ws / ".minicode" / "skills" / "my-skill" / "SKILL.md").exists()
+        # 导入插件 + 命令（多路径）
+        r = json.load(post(base, "/api/ext/import",
+                           {"kind": "plugin", "paths": [str(src / "tool.py")]},
+                           token=srv.token))
+        assert r["imported"] == ["tool"]
+        assert (ws / ".minicode" / "tools" / "tool.py").exists()
+        r = json.load(post(base, "/api/ext/import",
+                           {"kind": "command", "paths": [str(src / "greet.md")]},
+                           token=srv.token))
+        assert r["imported"] == ["greet"]
+        # .txt 不是合法技能来源 → 200 但进 failed 列表
+        d = json.load(post(base, "/api/ext/import",
+                           {"kind": "skill", "paths": [str(src / "bad.txt")]},
+                           token=srv.token))
+        assert d["failed"] and "SKILL.md" in d["failed"][0]["error"]
+        with pytest.raises(urllib.error.HTTPError) as ei2:
+            post(base, "/api/ext/import", {"kind": "nonsense", "paths": ["x"]},
+                 token=srv.token)
+        assert ei2.value.code == 400
+        # 重载端点
+        assert json.load(post(base, "/api/ext/reload", {}, token=srv.token))["ok"]

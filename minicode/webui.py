@@ -401,6 +401,10 @@ class WebUIServer:
                     outer._rebuild(new_session=False)
                     outer._emit({"t": "info", "text": "扩展已重载（技能/插件/命令/子智能体）"})
                     return self._json(200, {"ok": True})
+                if path == "/api/fs/pick":
+                    return self._json(200, outer._native_pick(body))
+                if path == "/api/ext/import":
+                    return self._json(*outer._ext_import(body))
                 if path.startswith("/api/ext/"):
                     return self._json(*outer._ext_manage(path, body))
                 if path == "/api/probe":
@@ -859,6 +863,63 @@ class WebUIServer:
                     .replace("{args}", arg)}
         return {"error": f"未知命令 /{name}（/help 查看可用命令）"}
 
+    _pick_lock = threading.Lock()
+
+    def _native_pick(self, body: dict) -> dict:
+        """弹出系统原生选择器（任意盘符/任意位置）。kind: folder|file。"""
+        kind = body.get("kind") or "folder"
+        title = str(body.get("title") or "选择位置")
+        initial = str(body.get("initial") or "") or None
+        multi = bool(body.get("multi"))
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except ImportError:
+            return {"error": "本机 Python 缺少 tkinter，无法弹出系统对话框"}
+
+        with self._pick_lock:   # 串行化：同一时刻只弹一个系统对话框
+            result = {"path": None, "paths": None}
+            done = threading.Event()
+
+            def worker():
+                root = None
+                try:
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.attributes("-topmost", True)   # 置顶，不被浏览器遮挡
+                    if kind == "folder":
+                        p = filedialog.askdirectory(title=title,
+                                                    initialdir=initial)
+                        result["path"] = p or None
+                    else:
+                        exts = body.get("ext") or []
+                        filetypes = ([("相关文件", "*" + " *".join(exts))]
+                                     if exts else [("所有文件", "*.*")])
+                        if multi:
+                            ps = filedialog.askopenfilenames(
+                                title=title, initialdir=initial,
+                                filetypes=filetypes)
+                            result["paths"] = list(ps) or None
+                        else:
+                            p = filedialog.askopenfilename(
+                                title=title, initialdir=initial,
+                                filetypes=filetypes)
+                            result["path"] = p or None
+                except Exception as e:
+                    result["error"] = f"{type(e).__name__}: {e}"
+                finally:
+                    try:
+                        if root is not None:
+                            root.destroy()
+                    except Exception:
+                        pass
+                    done.set()
+
+            threading.Thread(target=worker, daemon=True).start()
+            if not done.wait(timeout=1800):   # 用户可能挑选很久
+                return {"error": "对话框超时未响应"}
+            return result
+
     def _fs_list(self, raw: str) -> dict:
         """服务端目录浏览器：列出某路径下的子目录（供工作区选择弹窗）。"""
         import os
@@ -1004,6 +1065,91 @@ class WebUIServer:
         except OSError as e:
             return 500, {"error": str(e)}
         return 404, {"error": f"unknown extension op: {path}"}
+
+    def _ext_import(self, body: dict):
+        """直接导入本机文件为扩展：技能(文件夹或 .md) / 插件(.py) /
+        命令与子智能体(.md)。导入后自动重载扩展。"""
+        kind = body.get("kind")
+        paths = body.get("paths") or ([body.get("path")] if body.get("path") else [])
+        overwrite = bool(body.get("overwrite"))
+        if kind not in ("skill", "plugin", "command", "agent") or not paths:
+            return 400, {"error": "kind 和 paths 是必填项"}
+        if self.busy:
+            return 409, {"error": "a turn is running"}
+        project_ext = self.cfg.cwd / ".minicode"
+        imported, skipped, failed = [], [], []
+
+        for raw in paths:
+            src = Path(raw).expanduser()
+            if not src.exists():
+                failed.append({"path": str(src), "error": "文件/目录不存在"})
+                continue
+            if kind == "skill":
+                base = project_ext / "skills"
+                if src.is_dir():
+                    name = self._slug(src.name)
+                    dest = base / name
+                    if not (src / "SKILL.md").exists():
+                        failed.append({"path": str(src),
+                                       "error": "技能文件夹必须包含 SKILL.md"})
+                        continue
+                elif src.suffix.lower() == ".md":
+                    name = self._slug(src.stem)
+                    dest = base / name
+                else:
+                    failed.append({"path": str(src),
+                                   "error": "技能需要文件夹（含 SKILL.md）或 .md 文件"})
+                    continue
+                if dest.exists() and not overwrite:
+                    skipped.append({"name": name, "error": "同名技能已存在"})
+                    continue
+                try:
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    base.mkdir(parents=True, exist_ok=True)
+                    if src.is_dir():
+                        shutil.copytree(src, dest)
+                    else:
+                        dest.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dest / "SKILL.md")
+                    imported.append(name)
+                except OSError as e:
+                    failed.append({"path": str(src), "error": str(e)})
+            elif kind == "plugin":
+                if src.suffix.lower() != ".py" or not src.is_file():
+                    failed.append({"path": str(src), "error": "插件必须是 .py 文件"})
+                    continue
+                base = project_ext / "tools"
+                base.mkdir(parents=True, exist_ok=True)
+                dest = base / src.name
+                if dest.exists() and not overwrite:
+                    skipped.append({"name": src.stem, "error": "同名插件已存在"})
+                    continue
+                try:
+                    shutil.copy2(src, dest)
+                    imported.append(src.stem)
+                except OSError as e:
+                    failed.append({"path": str(src), "error": str(e)})
+            elif kind in ("command", "agent"):
+                if src.suffix.lower() != ".md" or not src.is_file():
+                    failed.append({"path": str(src), "error": "必须是 .md 文件"})
+                    continue
+                base = project_ext / ("commands" if kind == "command" else "agents")
+                base.mkdir(parents=True, exist_ok=True)
+                dest = base / f"{self._slug(src.stem)}.md"
+                if dest.exists() and not overwrite:
+                    skipped.append({"name": src.stem, "error": "同名已存在"})
+                    continue
+                try:
+                    shutil.copy2(src, dest)
+                    imported.append(self._slug(src.stem))
+                except OSError as e:
+                    failed.append({"path": str(src), "error": str(e)})
+
+        if imported:
+            self._rebuild(new_session=False)   # 让新扩展立即可用
+        return 200, {"ok": True, "imported": imported,
+                     "skipped": skipped, "failed": failed}
 
     def _extensions(self) -> dict:
         """扩展体系全目录：技能 / 插件 / 自定义子智能体 / 自定义命令 / MCP。"""
