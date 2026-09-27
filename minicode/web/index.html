@@ -176,9 +176,42 @@
       <p class="dim small">智能体的读写被锁定在当前工作区内；切换工作区会开始新会话。</p>
       <div class="ws-list" id="wsList"></div>
       <div class="row">
-        <input id="wsInput" class="mono" placeholder="输入要添加的工作区绝对路径…">
-        <button id="btnAddWs" class="btn ghost">添加</button>
+        <button id="btnBrowse" class="btn ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          浏览目录…
+        </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 服务端目录浏览器 -->
+<div class="modal" id="dirModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><b>选择工作区目录</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
+    <div class="dir-body">
+      <div class="dir-bar">
+        <button id="dirUp" class="iconbtn" title="上一级" aria-label="上一级">↑</button>
+        <input id="dirPath" class="mono" placeholder="绝对路径" spellcheck="false">
+        <button id="dirGo" class="btn ghost">跳转</button>
+      </div>
+      <div class="dir-list" id="dirList"><div class="side-empty">加载中…</div></div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close>取消</button>
+        <button id="dirSelect" class="btn primary">选择此目录</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 扩展新建表单 -->
+<div class="modal" id="formModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><b id="formTitle">新建</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
+    <div class="form" id="formFields"></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>取消</button>
+      <button id="formSubmit" class="btn primary">创建</button>
     </div>
   </div>
 </div>

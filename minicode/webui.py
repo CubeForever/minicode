@@ -15,6 +15,7 @@ import hmac
 import json
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -282,6 +283,8 @@ class WebUIServer:
                         "timeout": cfg.timeout})
                 if path == "/api/extensions":
                     return self._json(200, outer._extensions())
+                if path == "/api/fs/list":
+                    return self._json(200, outer._fs_list(query.get("path", [""])[0]))
                 return self._json(404, {"error": "not found"})
 
             def _static(self, fname: str, ctype: str):
@@ -392,6 +395,14 @@ class WebUIServer:
                     return self._json(*outer._workspace_switch(body))
                 if path == "/api/config":
                     return self._json(*outer._config_update(body))
+                if path == "/api/ext/reload":
+                    if outer.busy:
+                        return self._json(409, {"error": "a turn is running"})
+                    outer._rebuild(new_session=False)
+                    outer._emit({"t": "info", "text": "扩展已重载（技能/插件/命令/子智能体）"})
+                    return self._json(200, {"ok": True})
+                if path.startswith("/api/ext/"):
+                    return self._json(*outer._ext_manage(path, body))
                 if path == "/api/probe":
                     if outer.busy:
                         return self._json(409, {"error": "a turn is running"})
@@ -420,7 +431,6 @@ class WebUIServer:
                     outer._emit({"t": "plain", "text": f"$ {command}"})
                     outer._emit({"t": "plain", "text": out})
                     return self._json(200, {"ok": True})
-                return self._json(404, {"error": "not found"})
                 if path == "/api/compact":
                     if outer.busy:
                         return self._json(409, {"error": "a turn is running"})
@@ -848,6 +858,152 @@ class WebUIServer:
             return {"turn": custom[1].replace("$ARGUMENTS", arg)
                     .replace("{args}", arg)}
         return {"error": f"未知命令 /{name}（/help 查看可用命令）"}
+
+    def _fs_list(self, raw: str) -> dict:
+        """服务端目录浏览器：列出某路径下的子目录（供工作区选择弹窗）。"""
+        import os
+        raw = (raw or "").strip()
+        if os.name == "nt" and not raw:
+            drives = []
+            for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                dp = Path(f"{d}:\\")
+                if dp.exists():
+                    drives.append(f"{d}:\\")
+            return {"path": "", "parent": None, "dirs": drives, "isDrives": True}
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            return {"error": "需要绝对路径"}
+        try:
+            p = p.resolve()
+            if not p.is_dir():
+                return {"error": f"目录不存在：{p}"}
+            dirs = []
+            for e in p.iterdir():
+                if e.is_dir() and not e.name.startswith("."):
+                    dirs.append(e.name)
+            dirs.sort(key=str.lower)
+            parent = None
+            if p.parent != p:
+                parent = str(p.parent)
+            return {"path": str(p), "parent": parent, "dirs": dirs[:500],
+                    "isDrives": False}
+        except OSError as e:
+            return {"error": str(e)}
+
+    @staticmethod
+    def _slug(raw: str) -> str:
+        return re.sub(r"[^\w\-]+", "-", str(raw or "")).strip("-")[:64]
+
+    def _ext_manage(self, path: str, body: dict):
+        """扩展自由增删：/api/ext/<type>/<create|delete>。写入限于
+        工作区 .minicode/** 与 ~/.minicode/**（内置资源只读）。"""
+        kind = path[len("/api/ext/"):].split("/")[0]
+        action = path[len("/api/ext/"):].split("/")[1]
+        name = self._slug(body.get("name"))
+        if not name:
+            return 400, {"error": "name is required"}
+        project_ext = self.cfg.cwd / ".minicode"
+
+        def _rm(p: Path) -> tuple:
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
+                return 200, {"ok": True, "deleted": name}
+            except OSError as e:
+                return 500, {"error": str(e)}
+
+        try:
+            if kind == "skill":
+                base = project_ext / "skills"
+                if action == "create":
+                    d = base / name
+                    if d.exists():
+                        return 409, {"error": f"技能 {name} 已存在"}
+                    d.mkdir(parents=True)
+                    desc = str(body.get("desc") or "").strip()
+                    content = str(body.get("content") or "")
+                    (d / "SKILL.md").write_text(
+                        f"---\nname: {name}\ndescription: {desc}\n---\n\n{content}\n",
+                        encoding="utf-8")
+                    return 200, {"ok": True, "name": name}
+                if action == "delete":
+                    source = body.get("source")
+                    if source == "内置":
+                        return 400, {"error": "内置技能不可删除"}
+                    base = (Path.home() / ".minicode" / "skills") \
+                        if source == "用户" else base
+                    d = (base / name).resolve()
+                    if base.resolve() not in d.parents or not d.exists():
+                        return 404, {"error": "skill not found"}
+                    return _rm(d)
+            if kind == "command":
+                base = project_ext / "commands"
+                f = base / f"{name}.md"
+                if action == "create":
+                    if f.exists():
+                        return 409, {"error": f"命令 {name} 已存在"}
+                    base.mkdir(parents=True, exist_ok=True)
+                    desc = str(body.get("desc") or "").strip()
+                    content = str(body.get("content") or "")
+                    f.write_text(
+                        f"---\ndescription: {desc}\n---\n\n{content}\n",
+                        encoding="utf-8")
+                    return 200, {"ok": True, "name": name}
+                if action == "delete":
+                    if not f.exists():
+                        return 404, {"error": "command not found"}
+                    return _rm(f)
+            if kind == "agent":
+                base = project_ext / "agents"
+                f = base / f"{name}.md"
+                if action == "create":
+                    if f.exists():
+                        return 409, {"error": f"子智能体 {name} 已存在"}
+                    base.mkdir(parents=True, exist_ok=True)
+                    desc = str(body.get("desc") or "").strip()
+                    tools = str(body.get("tools") or "").strip()
+                    model = str(body.get("model") or "").strip()
+                    prompt = str(body.get("prompt") or "").strip()
+                    head = f"---\ndescription: {desc}\n"
+                    if tools:
+                        head += f"tools: {tools}\n"
+                    if model:
+                        head += f"model: {model}\n"
+                    head += "---\n"
+                    f.write_text(head + "\n" + prompt + "\n", encoding="utf-8")
+                    return 200, {"ok": True, "name": name}
+                if action == "delete":
+                    if not f.exists():
+                        return 404, {"error": "agent not found"}
+                    return _rm(f)
+            if kind == "plugin":
+                base = project_ext / "tools"
+                f = base / f"{name}.py"
+                if action == "create":
+                    if f.exists():
+                        return 409, {"error": f"插件 {name} 已存在"}
+                    base.mkdir(parents=True, exist_ok=True)
+                    desc = str(body.get("desc") or f"{name} 插件")
+                    f.write_text(
+                        f'TOOL = {{\n    "name": "{name}",\n'
+                        f'    "description": "{desc}",\n'
+                        f'    "kind": "meta",\n'
+                        f'    "input_schema": {{"type": "object", "properties": {{}}}},\n'
+                        f'}}\n\n\n'
+                        f'def run(args: dict, ctx) -> str:\n'
+                        f'    return "hello from {name}"\n',
+                        encoding="utf-8")
+                    return 200, {"ok": True, "name": name,
+                                 "note": "重载扩展后生效"}
+                if action == "delete":
+                    if not f.exists():
+                        return 404, {"error": "plugin not found"}
+                    return _rm(f)
+        except OSError as e:
+            return 500, {"error": str(e)}
+        return 404, {"error": f"unknown extension op: {path}"}
 
     def _extensions(self) -> dict:
         """扩展体系全目录：技能 / 插件 / 自定义子智能体 / 自定义命令 / MCP。"""

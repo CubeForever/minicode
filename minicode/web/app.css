@@ -1105,3 +1105,48 @@ button, textarea, select, input { touch-action: manipulation; }
   color: var(--faint);
   padding: 10px 10px 4px;
 }
+
+/* ---------------- 目录浏览器 / 扩展表单 ---------------- */
+.dir-body { padding: 12px 16px 0; }
+.dir-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.dir-bar input {
+  flex: 1;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 12.5px;
+  outline: none;
+}
+.dir-bar input:focus { border-color: var(--accent); }
+.dir-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg2);
+}
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 14px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  transition: background .12s ease;
+}
+.dir-row:last-child { border-bottom: none; }
+.dir-row:hover { background: var(--accent-weak); color: var(--accent); }
+.dir-row svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--dim); }
+.dir-row:hover svg { color: var(--accent); }
+.ext-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.btn.small { padding: 4px 12px; font-size: 12px; }
+.btn.danger:hover { border-color: var(--err); color: var(--err); }
+textarea.mono { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }

@@ -41,7 +41,24 @@ class Running:
         self.t.join(timeout=5)
 
 
+def _with_retry(fn, tries=3):
+    """连接层抖动重试（Windows 快速起停服务器时的偶发 RemoteDisconnected）。"""
+    import http.client
+    for attempt in range(tries):
+        try:
+            return fn()
+        except (http.client.RemoteDisconnected, ConnectionResetError,
+                ConnectionAbortedError):
+            if attempt == tries - 1:
+                raise
+            time.sleep(0.2)
+
+
 def post(base, path, payload=None, token=None):
+    return _with_retry(lambda: _post_once(base, path, payload, token))
+
+
+def _post_once(base, path, payload, token):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Minicode-Token"] = token
@@ -52,9 +69,13 @@ def post(base, path, payload=None, token=None):
 
 
 def get(base, path, token=None):
+    return _with_retry(lambda: _get_once(base, path, token))
+
+
+def _get_once(base, path, token):
     headers = {"X-Minicode-Token": token} if token else {}
-    return urllib.request.urlopen(urllib.request.Request(base + path, headers=headers),
-                                  timeout=10)
+    return urllib.request.urlopen(
+        urllib.request.Request(base + path, headers=headers), timeout=10)
 
 
 def wait_idle(srv, timeout=15):

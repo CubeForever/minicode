@@ -739,7 +739,9 @@ $("#btnSettings").addEventListener("click", openSettings);
 $("#model").addEventListener("click", openSettings);
 
 /* ---------------- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP ---------------- */
-$("#btnExt").addEventListener("click", async () => {
+$("#btnExt").addEventListener("click", openExtensions);
+
+async function openExtensions() {
   $("#extModal").hidden = false;
   $("#extBody").innerHTML = `<div class="side-empty">加载中…</div>`;
   try {
@@ -747,17 +749,40 @@ $("#btnExt").addEventListener("click", async () => {
       { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
     const box = $("#extBody");
     box.innerHTML = "";
-    const section = (title, rows, empty, runName) => {
+    const section = (title, rows, empty, opts = {}) => {
       const sec = el("div", "ext-sec");
-      sec.appendChild(el("div", "side-label mono", title));
+      const head = el("div", "ext-sec-head");
+      head.appendChild(el("div", "side-label mono", title));
+      if (opts.addType) {
+        const add = el("button", "btn ghost small", "+ 新建");
+        add.addEventListener("click", () => openExtForm(opts.addType));
+        head.appendChild(add);
+      }
+      if (opts.reload) {
+        const rl = el("button", "btn ghost small", "重载");
+        rl.addEventListener("click", async () => {
+          await api("/api/ext/reload");
+          openExtensions();
+        });
+        head.appendChild(rl);
+      }
+      sec.appendChild(head);
       if (!rows.length) { sec.appendChild(el("div", "side-empty", empty)); box.appendChild(sec); return; }
       for (const r of rows) {
         const line = el("div", "ext-item");
         line.innerHTML = `<span class="ext-name mono">${esc(r.name)}</span>` +
           (r.source ? `<span class="ext-src">${esc(r.source)}</span>` : "") +
           `<span class="ext-desc">${esc(r.desc || r.status || "")}</span>` +
-          (runName ? `<button class="btn ghost small" data-run="${esc(r.name)}">运行</button>` : "");
-        if (runName) {
+          (opts.use ? `<button class="btn ghost small" data-use="${esc(r.name)}">使用</button>` : "") +
+          (opts.run ? `<button class="btn ghost small" data-run="${esc(r.name)}">运行</button>` : "") +
+          (r.deletable ? `<button class="btn ghost small danger" data-del="${esc(r.name)}" title="删除">✕</button>` : "");
+        if (opts.use) {
+          line.querySelector("[data-use]").addEventListener("click", () => {
+            $("#extModal").hidden = true;
+            api("/api/turn", { prompt: `请加载 ${r.name} 技能并按其流程协助我处理任务。` });
+          });
+        }
+        if (opts.run) {
           line.querySelector("[data-run]").addEventListener("click", () => {
             $("#extModal").hidden = true;
             input.value = "/" + r.name;
@@ -765,29 +790,43 @@ $("#btnExt").addEventListener("click", async () => {
             send();
           });
         }
+        if (r.deletable) {
+          line.querySelector("[data-del]").addEventListener("click", () => {
+            if (!confirm(`删除「${r.name}」？此操作不可恢复。`)) return;
+            api("/api/ext/" + opts.delKind + "/delete",
+                { name: r.name, source: r.source })
+              .then(() => openExtensions())
+              .catch(() => {});
+          });
+        }
         sec.appendChild(line);
       }
       box.appendChild(sec);
     };
     section("技能（skill 工具按需加载）",
-      d.skills.map(s => ({ name: s.name, desc: s.desc, source: s.source })),
-      "没有可用技能——在 .minicode/skills/<名字>/SKILL.md 放置工作流即可");
-    section("插件工具（.minicode/tools/*.py，首次加载需信任确认）",
+      d.skills.map(s => ({ name: s.name, desc: s.desc, source: s.source,
+                           deletable: s.source !== "内置" })),
+      "没有可用技能——点击右上角 + 新建，或放置 .minicode/skills/<名字>/SKILL.md",
+      { use: true, addType: "skill", delKind: "skill" });
+    section("插件工具（.minicode/tools/*.py）",
       d.plugins.map(n => ({ name: n, desc: "本地 Python 插件工具" })),
-      "没有已加载插件");
+      "没有插件——点击右上角 + 新建",
+      { addType: "plugin", delKind: "plugin", reload: true });
     section("自定义子智能体（.minicode/agents/*.md）",
       d.agents.map(a => ({ name: a.name, desc: a.desc + (a.tools ? ` · tools: ${a.tools}` : "") + (a.model ? ` · model: ${a.model}` : "") })),
-      "没有自定义子智能体");
+      "没有自定义子智能体",
+      { addType: "agent", delKind: "agent" });
     section("自定义命令（.minicode/commands/*.md）",
       d.commands.map(c => ({ name: c.name, desc: c.desc })),
-      "没有自定义命令", true);   // 可点击运行
-    section("MCP 服务器",
+      "没有自定义命令",
+      { run: true, addType: "command", delKind: "command" });
+    section("MCP 服务器（.minicode.json 的 mcpServers）",
       d.mcp.map(m => ({ name: m.server, desc: `${m.status} · ${m.tools} tools${m.error ? " · " + m.error : ""}` })),
       "未配置 MCP 服务器");
   } catch (e) {
     $("#extBody").innerHTML = `<div class="side-empty">加载失败</div>`;
   }
-});
+}
 /* 弹窗：点击遮罩 / ✕ / Esc 关闭，并返还焦点到输入框 */
 document.querySelectorAll(".modal").forEach(m => {
   m.addEventListener("click", e => {
@@ -811,6 +850,133 @@ document.addEventListener("keydown", e => {
   hideCmdHint();
   if (closed) input.focus();
 });
+/* ---------------- 服务端目录浏览器 ---------------- */
+let dirSelectCb = null;
+async function browseDir(startPath, onPick) {
+  dirSelectCb = onPick;
+  $("#dirModal").hidden = false;
+  await loadDir(startPath || "");
+}
+async function loadDir(path) {
+  const list = $("#dirList");
+  list.innerHTML = `<div class="side-empty">加载中…</div>`;
+  try {
+    const d = await fetch("/api/fs/list?path=" + encodeURIComponent(path),
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    if (d.error) { list.innerHTML = `<div class="side-empty">${esc(d.error)}</div>`; return; }
+    $("#dirPath").value = d.path || $("#dirPath").value;
+    $("#dirUp").disabled = !d.parent;
+    $("#dirUp").onclick = () => d.parent && loadDir(d.parent);
+    list.innerHTML = "";
+    if (!d.dirs.length) list.innerHTML = `<div class="side-empty">此目录下没有子目录</div>`;
+    for (const name of d.dirs) {
+      const row = el("button", "dir-row",
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>` +
+        `<span>${esc(name)}</span>`);
+      const target = (d.path && !d.isDrives ? d.path.replace(/[\/]+$/, "") + "/" : "") + name;
+      row.addEventListener("click", () => loadDir(target));
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="side-empty">加载失败</div>`;
+  }
+}
+$("#dirGo").addEventListener("click", () => loadDir($("#dirPath").value.trim()));
+$("#dirPath").addEventListener("keydown", e => {
+  if (e.key === "Enter") loadDir($("#dirPath").value.trim());
+});
+$("#dirSelect").addEventListener("click", () => {
+  const p = $("#dirPath").value.trim();
+  if (dirSelectCb && p) dirSelectCb(p);
+  $("#dirModal").hidden = true;
+});
+
+/* ---------------- 扩展新建表单 ---------------- */
+const EXT_FORMS = {
+  skill: {
+    title: "新建技能",
+    fields: [
+      { k: "name", label: "名称（字母/数字/连字符）", type: "text" },
+      { k: "desc", label: "一句话描述（模型据此决定何时使用）", type: "text" },
+      { k: "content", label: "技能内容（Markdown 工作流步骤）", type: "textarea" },
+    ],
+    endpoint: "/api/ext/skill/create",
+  },
+  command: {
+    title: "新建自定义命令",
+    fields: [
+      { k: "name", label: "命令名（用 /名称 触发）", type: "text" },
+      { k: "desc", label: "描述", type: "text" },
+      { k: "content", label: "命令内容（$ARGUMENTS 为参数占位）", type: "textarea" },
+    ],
+    endpoint: "/api/ext/command/create",
+  },
+  agent: {
+    title: "新建自定义子智能体",
+    fields: [
+      { k: "name", label: "名称（dispatch_agent 的 subagent_type）", type: "text" },
+      { k: "desc", label: "描述", type: "text" },
+      { k: "tools", label: "可用工具（逗号分隔，如 read_file,grep；留空=全部只读）", type: "text" },
+      { k: "prompt", label: "系统提示词", type: "textarea" },
+    ],
+    endpoint: "/api/ext/agent/create",
+  },
+  plugin: {
+    title: "新建插件工具",
+    fields: [
+      { k: "name", label: "工具名（字母/数字/连字符）", type: "text" },
+      { k: "desc", label: "描述", type: "text" },
+    ],
+    endpoint: "/api/ext/plugin/create",
+  },
+};
+function openExtForm(type) {
+  const spec = EXT_FORMS[type];
+  if (!spec) return;
+  $("#formTitle").textContent = spec.title;
+  const box = $("#formFields");
+  box.innerHTML = "";
+  for (const f of spec.fields) {
+    const label = el("label", "", esc(f.label));
+    let field;
+    if (f.type === "textarea") {
+      field = document.createElement("textarea");
+      field.rows = 6;
+    } else {
+      field = document.createElement("input");
+      field.type = "text";
+      field.className = "mono";
+    }
+    field.dataset.k = f.k;
+    label.appendChild(field);
+    box.appendChild(label);
+  }
+  $("#formSubmit").onclick = async () => {
+    const body = {};
+    for (const f of spec.fields) {
+      const node = box.querySelector(`[data-k="${f.k}"]`);
+      body[f.k] = node.value.trim();
+    }
+    try {
+      await api(spec.endpoint, body);
+      $("#formModal").hidden = true;
+      openExtensions();
+    } catch (e) { /* 错误已展示 */ }
+  };
+  $("#formModal").hidden = false;
+}
+
+$("#btnBrowse").addEventListener("click", () => {
+  browseDir($("#wsPath").title || "", async (picked) => {
+    try {
+      await api("/api/workspace/add", { path: picked });
+      await api("/api/workspace/switch", { path: picked });
+      $("#wsModal").hidden = true;
+      refreshWorkspaces();
+    } catch (e) { /* 错误已展示 */ }
+  });
+});
+
 /* API Key 显示 / 隐藏 */
 $("#cfgKeyToggle").addEventListener("click", () => {
   const key = $("#cfgKey");
@@ -854,16 +1020,6 @@ $("#wsCurrent").addEventListener("click", () => {
   $("#wsModal").hidden = false;
   refreshWorkspaces();
 });
-$("#btnAddWs").addEventListener("click", async () => {
-  const p = $("#wsInput").value.trim();
-  if (!p) return;
-  try {
-    await api("/api/workspace/add", { path: p });
-    $("#wsInput").value = "";
-    refreshWorkspaces();
-  } catch (e) { /* 错误已展示 */ }
-});
-
 /* ---------------- 通用列表弹窗（回退等） ---------------- */
 function showPickList(title, items, hint, prefix) {
   $("#listTitle").textContent = title;
