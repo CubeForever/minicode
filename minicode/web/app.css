@@ -27,6 +27,7 @@
   --shadow-pop: 0 8px 28px rgba(0, 0, 0, .45);
   --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SFMono-Regular", monospace;
   --serif: Georgia, "Times New Roman", "STZhongsong", "SimSun", serif;
+  color-scheme: dark;   /* 原生控件（下拉/复选框/滚动条）跟随暗色 */
 }
 html[data-theme="light"] {
   --bg: #faf9f6;
@@ -47,6 +48,7 @@ html[data-theme="light"] {
   --warn: #a67719;
   --err: #c24040;
   --shadow-pop: 0 8px 28px rgba(60, 50, 30, .12);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -1094,7 +1096,11 @@ button, textarea, select, input { touch-action: manipulation; }
   padding: 2px 4px;
 }
 .composer-row select:hover { color: var(--text); }
-.composer-row select option { color: var(--text); font-family: inherit; }
+select option {
+  background: var(--panel2);
+  color: var(--text);
+}
+.composer-row select option { font-family: inherit; }
 .composer-row .grow { flex: 1; font-feature-settings: "tnum"; }
 
 /* 会话分组标签 */
