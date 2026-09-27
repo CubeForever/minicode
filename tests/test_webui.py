@@ -7,9 +7,13 @@ import urllib.request
 
 import pytest
 
+from minicode.agent import Agent
 from minicode.config import Config
 from minicode.fake import FakeProvider
 from minicode.session import Session
+from minicode.tools import build_registry
+from minicode.tools.shell import ShellState
+from minicode.ui import UI
 from minicode.webui import WebBridgeUI, WebUIServer
 
 
@@ -268,3 +272,158 @@ def test_webui_sse_stream_delivers_hello(tmp_path):
             assert first.startswith("data:") and "hello" in first
         finally:
             resp.close()
+
+
+# ---------- 会话管理：归档 / 重命名 / 删除 ----------
+
+def test_webui_session_management(tmp_path, monkeypatch):
+    srv = make_server(tmp_path, [], mode="default")
+    sessions = tmp_path / "saved"
+    sessions.mkdir()
+    Session(messages=[{"role": "user", "content": "a"}]).save(
+        sessions / "20260926-100000_alpha.json")
+    Session(messages=[{"role": "user", "content": "b"}]).save(
+        sessions / "20260926-100001_beta.json")
+    monkeypatch.setattr("minicode.session.SESSIONS_DIR", sessions)
+
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        # 归档
+        r = json.load(post(base, "/api/session/archive",
+                           {"name": "20260926-100000_alpha"}, token=srv.token))
+        assert r["ok"]
+        d = json.load(get(base, "/api/sessions", token=srv.token))
+        assert [s["name"] for s in d["sessions"]] == ["20260926-100001_beta"]
+        assert [s["name"] for s in d["archived"]] == ["20260926-100000_alpha"]
+        # 重命名（归档区）
+        r = json.load(post(base, "/api/session/rename",
+                           {"name": "20260926-100000_alpha", "title": "旧任务",
+                            "archived": True}, token=srv.token))
+        assert r["ok"] and r["name"] == "20260926-100000_旧任务"
+        # 恢复
+        r = json.load(post(base, "/api/session/unarchive",
+                           {"name": "20260926-100000_旧任务"}, token=srv.token))
+        assert r["ok"]
+        d = json.load(get(base, "/api/sessions", token=srv.token))
+        assert "20260926-100000_旧任务" in [s["name"] for s in d["sessions"]]
+        # 删除
+        r = json.load(post(base, "/api/session/delete",
+                           {"name": "20260926-100000_旧任务"}, token=srv.token))
+        assert r["ok"]
+        assert not (sessions / "20260926-100000_旧任务.json").exists()
+        # 非法名字与不存在
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            post(base, "/api/session/delete", {"name": "../x"}, token=srv.token)
+        assert ei.value.code == 400
+        with pytest.raises(urllib.error.HTTPError) as ei2:
+            post(base, "/api/session/delete", {"name": "ghost"}, token=srv.token)
+        assert ei2.value.code == 404
+
+
+# ---------- 斜杠命令分发 ----------
+
+def test_webui_command_endpoint(tmp_path):
+    srv = make_server(tmp_path, [{"text": "ok"}], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        r = json.load(post(base, "/api/command", {"line": "/mode plan"},
+                           token=srv.token))
+        assert r["output"] == "权限模式：plan"
+        assert json.load(get(base, "/api/status", token=srv.token))["mode"] == "plan"
+        r = json.load(post(base, "/api/command", {"line": "/yolo"},
+                           token=srv.token))
+        assert "full-access" in r["output"]
+        r = json.load(post(base, "/api/command", {"line": "/limit 200k"},
+                           token=srv.token))
+        assert json.load(get(base, "/api/status",
+                             token=srv.token))["context_limit"] == 200000
+        r = json.load(post(base, "/api/command", {"line": "/verify pytest -q"},
+                           token=srv.token))
+        assert "pytest -q" in r["output"]
+        r = json.load(post(base, "/api/command", {"line": "/init"},
+                           token=srv.token))
+        assert "MINICODE" in r["turn"]          # turn 型命令交给 /api/turn
+        r = json.load(post(base, "/api/command", {"line": "/nope"},
+                           token=srv.token))
+        assert "未知命令" in r["error"]
+
+
+# ---------- 模型 API 配置 ----------
+
+def test_webui_config_get_update_save(tmp_path, monkeypatch):
+    from minicode import config as config_mod
+    user_cfg = tmp_path / "user-minicode.json"
+    monkeypatch.setattr(config_mod, "USER_CONFIG", user_cfg)
+    srv = make_server(tmp_path, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        c = json.load(get(base, "/api/config", token=srv.token))
+        assert c["model"] == "fake" and c["api_key_set"] is False
+        r = json.load(post(base, "/api/config",
+                           {"model": "glm-x", "api_key": "sk-test",
+                            "save": True}, token=srv.token))
+        assert r["ok"] and r["model"] == "glm-x"
+        assert json.load(get(base, "/api/status",
+                             token=srv.token))["model"] == "glm-x"
+        saved = json.loads(user_cfg.read_text(encoding="utf-8"))
+        assert saved["api_key"] == "sk-test" and saved["model"] == "glm-x"
+        c2 = json.load(get(base, "/api/config", token=srv.token))
+        assert c2["api_key_set"] is True and c2["api_key_tail"] == "test"
+
+
+# ---------- 工作区 ----------
+
+def test_webui_workspace_add_switch_remove(tmp_path, monkeypatch):
+    import minicode.webui as webui_mod
+    ws_file = tmp_path / "workspaces.json"
+    monkeypatch.setattr(webui_mod, "WORKSPACES_FILE", ws_file)
+    ws2 = tmp_path / "ws2"
+    ws2.mkdir()
+    srv = make_server(tmp_path, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        r = json.load(post(base, "/api/workspace/add",
+                           {"path": str(ws2)}, token=srv.token))
+        assert str(ws2) in r["list"]
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            post(base, "/api/workspace/add", {"path": "relative/path"},
+                 token=srv.token)
+        assert ei.value.code == 400
+        d = json.load(get(base, "/api/workspaces", token=srv.token))
+        assert d["current"] == str(tmp_path)
+        # 切换 → 新会话 + cwd 变更
+        r = json.load(post(base, "/api/workspace/switch",
+                           {"path": str(ws2)}, token=srv.token))
+        assert r["cwd"] == str(ws2)
+        assert json.load(get(base, "/api/status",
+                             token=srv.token))["cwd"] == str(ws2)
+        assert json.load(get(base, "/api/messages",
+                             token=srv.token))["messages"] == []
+        # 不能移除当前工作区
+        with pytest.raises(urllib.error.HTTPError) as ei2:
+            post(base, "/api/workspace/remove", {"path": str(ws2)},
+                 token=srv.token)
+        assert ei2.value.code == 400
+
+
+# ---------- 工作区边界锁定 ----------
+
+def test_webui_workspace_lock_denies_outside_writes(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    inside = tmp_path / "ws"
+    inside.mkdir()
+    cfg = Config(provider="fake", api_key="", model="fake", mode="full-access")
+    cfg.cwd = inside
+    cfg.workspace_lock = True
+    agent = Agent(FakeProvider([
+        {"tool_calls": [{"id": "t1", "name": "write_file",
+                         "args": json.dumps({"path": str(outside / "x.txt"),
+                                             "content": "pwn"})}]},
+        {"text": "done"}]), Session(), UI(), cfg,
+        build_registry(ShellState(inside, "bash")))
+    agent.run_turn("go")
+    tool_msg = agent.session.messages[2]
+    assert tool_msg["is_error"]
+    assert "工作区边界" in tool_msg["content"]
+    assert not (outside / "x.txt").exists()      # yolo 也被硬拒绝

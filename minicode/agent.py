@@ -438,11 +438,55 @@ class Agent:
                         return True
         return False
 
+    @staticmethod
+    def _is_under(path: Path, root: Path) -> bool:
+        try:
+            Path(path).resolve().relative_to(Path(root).resolve())
+            return True
+        except (ValueError, OSError):
+            return False
+
+    def _rel_display(self, path, cwd) -> str:
+        try:
+            return str(Path(path).resolve().relative_to(Path(cwd).resolve())) or "."
+        except (ValueError, OSError):
+            return str(path)
+
+    def _workspace_violation(self, tool, args: dict) -> Optional[str]:
+        """workspace_lock 开启时，写操作的目标落在本工作区（及 /add-dir 授权
+        目录）之外 → 硬拒绝。bash 无法可靠静态判定，不在其列（与终端同一局限）。"""
+        extra = [Path(d) for d in (getattr(self.config, "extra_dirs", None) or [])]
+        cwd = Path(self.config.cwd or Path.cwd())
+        for getter in ("mutated_paths", "mutated_path"):
+            fn = getattr(tool, getter, None)
+            if fn is None:
+                continue
+            try:
+                targets = fn(args, self.ctx)
+            except ToolError:
+                return None  # 参数问题由 run() 报错
+            targets = targets if isinstance(targets, list) else \
+                ([targets] if targets else [])
+            for t in targets:
+                if not t:
+                    continue
+                if not self._is_under(Path(t), cwd) and \
+                        not any(self._is_under(Path(t), e) for e in extra):
+                    return (f"工作区边界：{self._rel_display(t, cwd)} 在工作区之外"
+                            "（Web 工作区已锁定；可用 /add-dir 授权额外目录）")
+            break
+        return None
+
     def _authorized(self, tool, args: dict) -> Tuple[bool, str]:
         perms = getattr(self.config, "permissions", {}) or {}
         for rule in (perms.get("deny") or []):   # deny rules are hard blocks, even in yolo
             if rule_matches(rule, tool, args):
                 return False, f"denied by permission rule: {rule}"
+        # Web 工作区锁定：deny 之后立即生效，任何模式（含 yolo）都不放行
+        if getattr(self.config, "workspace_lock", False) and tool.kind == "write":
+            bad = self._workspace_violation(tool, args)
+            if bad:
+                return False, bad
         # sensitive-path guard: force confirmation in every mode
         guard = self._guard_reason(tool, args)
         if guard:

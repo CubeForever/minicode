@@ -18,13 +18,23 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     新会话
   </button>
+  <div class="side-section ws-section">
+    <div class="side-label mono">工作区</div>
+    <button class="ws-current" id="wsCurrent" title="切换 / 管理工作区">
+      <span class="ws-path mono" id="wsPath">…</span>
+      <span class="arr">⇅</span>
+    </button>
+  </div>
   <div class="side-section">
     <div class="side-label mono">历史会话</div>
     <div class="session-list" id="sessions">
       <div class="side-empty">暂无历史会话</div>
     </div>
   </div>
-  <div class="side-foot mono">本地运行 · 零依赖</div>
+  <div class="side-foot">
+    <span class="mono">本地运行 · 零依赖</span>
+    <button id="btnSettings" class="side-settings mono" title="模型 API 配置">⚙ 设置</button>
+  </div>
 </aside>
 <div class="side-mask" id="sideMask"></div>
 
@@ -66,8 +76,14 @@
   </main>
 
   <footer class="composer">
+    <div class="planbar" id="planBar" hidden>
+      <span class="mono">PLAN READY</span>
+      <span class="dim">计划已生成，确认后将切换到自动接受编辑并开始实施</span>
+      <button id="btnApprovePlan" class="btn primary">批准并实施</button>
+    </div>
+    <div class="cmdhint" id="cmdHint" hidden></div>
     <div class="input-card">
-      <textarea id="input" rows="1" placeholder="输入任务…"></textarea>
+      <textarea id="input" rows="1" placeholder="输入任务、/命令 或 !命令…"></textarea>
       <button id="btnSend" class="send" title="发送">↑</button>
     </div>
   </footer>
@@ -81,6 +97,67 @@
       <option value="full-access">完全访问</option>
     </select>
     <span class="st-right dim" id="usage"></span>
+  </div>
+</div>
+
+<!-- 模型 API 设置 -->
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><b>模型 API</b><button class="iconbtn" data-close>✕</button></div>
+    <div class="form">
+      <label>提供方
+        <select id="cfgProvider">
+          <option value="openai">OpenAI 兼容（GLM / DeepSeek / Kimi…）</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+      </label>
+      <label>Base URL <input id="cfgBase" class="mono" placeholder="https://api.openai.com/v1"></label>
+      <label>API Key <input id="cfgKey" class="mono" type="password" placeholder="留空则不修改"></label>
+      <label>模型 <input id="cfgModel" class="mono" placeholder="glm-4.6 / claude-sonnet-4-5"></label>
+      <div class="form-2col">
+        <label>max_tokens <input id="cfgMax" type="number" min="256"></label>
+        <label>上下文上限 <input id="cfgCtx" type="number" min="4096"></label>
+      </div>
+      <label>思考力度
+        <select id="cfgEffort">
+          <option value="">默认</option><option value="low">low</option>
+          <option value="medium">medium</option><option value="high">high</option>
+        </select>
+      </label>
+      <div class="row">
+        <button id="btnProbe" class="btn ghost">测试连接</button>
+        <span id="probeOut" class="mono dim small"></span>
+      </div>
+      <label class="chk"><input type="checkbox" id="cfgSave"> 保存到 ~/.minicode.json（含密钥，谨慎勾选）</label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>取消</button>
+      <button id="btnSaveCfg" class="btn primary">保存并重连</button>
+    </div>
+  </div>
+</div>
+
+<!-- 工作区管理 -->
+<div class="modal" id="wsModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><b>工作区</b><button class="iconbtn" data-close>✕</button></div>
+    <div class="form">
+      <p class="dim small">智能体的读写被锁定在当前工作区内；切换工作区会开始新会话。</p>
+      <div class="ws-list" id="wsList"></div>
+      <div class="row">
+        <input id="wsInput" class="mono" placeholder="输入要添加的工作区绝对路径…">
+        <button id="btnAddWs" class="btn ghost">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 通用列表（回退选择等） -->
+<div class="modal" id="listModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><b id="listTitle">选择</b><button class="iconbtn" data-close>✕</button></div>
+    <div class="modal-hint dim small" id="listHint"></div>
+    <div class="pick-list" id="pickList"></div>
   </div>
 </div>
 

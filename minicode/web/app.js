@@ -458,6 +458,7 @@ async function refreshStatus() {
     $("#usage").textContent =
       `ctx ${fmtTok(s.context_tokens)} · in ${fmtTok(s.usage.input)} · out ${fmtTok(s.usage.output)}`;
     if (document.activeElement !== $("#modeSel")) $("#modeSel").value = s.mode;
+    $("#planBar").hidden = !(s.mode === "plan" && !s.busy);
     setBusy(s.busy);
   } catch (e) { /* 服务未就绪时静默 */ }
 }
@@ -494,6 +495,8 @@ function connectEvents() {
       case "confirm": renderConfirm(e.id, e.title, e.preview); break;
       case "choose": renderChoose(e.id, e.question, e.options, e.multi, e.allow_other); break;
       case "busy": setBusy(e.busy); break;
+      case "workspace": chat.innerHTML = ""; sysLine("info", "工作区已切换：" + e.path);
+        refreshWorkspaces(); refreshSessions(); break;
       case "cleared": location.reload(); break;
     }
   };
@@ -509,10 +512,10 @@ function argsSummary(argsStr) {
     return oneLine(JSON.stringify(o));
   } catch (e) { return oneLine(String(argsStr)); }
 }
-function addHistoryThink(wrap, body, secs) {
+function addHistoryThink(wrap, body) {
   const think = el("div", "thinking",
-    `<div class="think-label"><span class="caret">▶</span>已深度思考` +
-    (secs ? `（用时 ${secs} 秒）` : "") + `</div><div class="think-body">${esc(body)}</div>`);
+    `<div class="think-label"><span class="caret">▶</span>已深度思考</div>` +
+    `<div class="think-body">${esc(body)}</div>`);
   think.querySelector(".think-label").addEventListener("click", () =>
     think.classList.toggle("open"));
   wrap.appendChild(think);
@@ -550,7 +553,7 @@ function autosize() {
   input.style.height = "auto";
   input.style.height = Math.min(190, input.scrollHeight) + "px";
 }
-input.addEventListener("input", autosize);
+input.addEventListener("input", () => { autosize(); showCmdHint(); });
 input.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 });
@@ -560,45 +563,102 @@ async function send() {
   if (!text || document.body.classList.contains("busy")) return;
   input.value = "";
   autosize();
-  try { await api("/api/turn", { prompt: text }); }
-  catch (e) { /* 错误已由 api() 展示 */ }
+  hideCmdHint();
+  try {
+    if (text.startsWith("/")) {                      // 斜杠命令 → 分发器
+      const r = await api("/api/command", { line: text });
+      if (r.turn) { await api("/api/turn", { prompt: r.turn }); return; }
+      if (r.list) { showPickList("选择回退点", r.list, r.hint, "/rewind"); return; }
+      sysLine("info", r.output || "（完成）");
+      refreshStatus();
+    } else if (text.startsWith("!")) {               // ! 直通本地执行
+      await api("/api/shell", { command: text.slice(1) });
+    } else {
+      await api("/api/turn", { prompt: text });
+    }
+  } catch (e) { /* 错误已由 api() 展示 */ }
 }
 
-/* 头部 / 侧边栏按钮 */
-$("#modeSel").addEventListener("change", e => api("/api/mode", { mode: e.target.value }));
-$("#btnCompact").addEventListener("click", () => api("/api/compact"));
-$("#btnNew").addEventListener("click", () => {
-  if (confirm("开始新会话？（当前上下文将被清空，历史文件改动不受影响）")) api("/api/clear");
-});
-$("#btnMenu").addEventListener("click", () => document.body.classList.toggle("side-open"));
-$("#sideMask").addEventListener("click", () => document.body.classList.remove("side-open"));
+/* 斜杠命令提示 */
+const COMMANDS = ["/mode", "/undo", "/rewind", "/diff", "/limit", "/reasoning",
+  "/cost", "/context", "/tools", "/todos", "/brain", "/memory", "/export",
+  "/transcript", "/plans", "/agents", "/skills", "/mcp", "/model", "/models",
+  "/add-dir", "/verify", "/init", "/commit", "/pr", "/review", "/help"];
+function showCmdHint() {
+  const hint = $("#cmdHint");
+  const v = input.value.trim();
+  if (!v.startsWith("/") || v.includes(" ")) { hint.hidden = true; return; }
+  const hits = COMMANDS.filter(c => c.startsWith(v.toLowerCase()));
+  hint.hidden = !hits.length;
+  hint.innerHTML = hits.map(c => `<b>${c}</b>`).join(" · ");
+}
+function hideCmdHint() { $("#cmdHint").hidden = true; }
 
-/* ---------------- 侧边栏：历史会话 ---------------- */
-let activeSession = null;
+/* ---------------- 侧边栏：会话管理 ---------------- */
 async function refreshSessions() {
   try {
     const d = await fetch("/api/sessions",
       { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
     const box = $("#sessions");
-    if (!d.sessions || !d.sessions.length) {
+    box.innerHTML = "";
+    const mkRow = (s, archived) => {
+      const row = el("div", "sess-row" + (s.name === activeSession ? " active" : ""));
+      const b = el("button", "sess",
+        `<span class="sess-title">${esc(s.title)}</span>` +
+        `<span class="sess-time mono">${esc(s.time)}</span>`);
+      b.addEventListener("click", () => openSession(s.name, archived));
+      const acts = el("span", "sess-acts");
+      if (!archived) {
+        acts.appendChild(actBtn("✎", "重命名", () => renameSession(s, row)));
+        acts.appendChild(actBtn("▣", "归档", () => sessionOp("/api/session/archive", { name: s.name })));
+      } else {
+        acts.appendChild(actBtn("↑", "恢复", () => sessionOp("/api/session/unarchive", { name: s.name })));
+      }
+      acts.appendChild(actBtn("✕", "删除", () => {
+        if (confirm(`永久删除会话「${s.title}」？此操作不可恢复。`))
+          sessionOp("/api/session/delete", { name: s.name, archived });
+      }, true));
+      row.appendChild(b);
+      row.appendChild(acts);
+      return row;
+    };
+    if (!(d.sessions || []).length && !(d.archived || []).length) {
       box.innerHTML = `<div class="side-empty">暂无历史会话</div>`;
       return;
     }
-    box.innerHTML = "";
-    for (const s of d.sessions) {
-      const b = el("button", "sess" + (s.name === activeSession ? " active" : ""),
-        `<span class="sess-title">${esc(s.title)}</span>` +
-        `<span class="sess-time mono">${esc(s.time)}</span>`);
-      b.addEventListener("click", () => openSession(s.name));
-      box.appendChild(b);
+    if (d.archived && d.archived.length) {
+      const label = el("div", "side-label mono", "已归档");
+      box.appendChild(label);
+      for (const s of d.archived) box.appendChild(mkRow(s, true));
+      const sep = el("div", "side-label mono", "未归档");
+      box.appendChild(sep);
     }
+    for (const s of d.sessions || []) box.appendChild(mkRow(s, false));
   } catch (e) { /* 服务未就绪时静默 */ }
 }
-async function openSession(name) {
+function actBtn(glyph, title, fn, danger) {
+  const b = el("button", danger ? "danger" : "", glyph);
+  b.title = title;
+  b.addEventListener("click", ev => { ev.stopPropagation(); fn(); });
+  return b;
+}
+async function sessionOp(path, body) {
+  try {
+    await api(path, body);
+    refreshSessions();
+  } catch (e) { /* 错误已展示 */ }
+}
+async function renameSession(s) {
+  const t = prompt("新的会话标题：", s.title);
+  if (!t || t === s.title) return;
+  await sessionOp("/api/session/rename", { name: s.name, title: t });
+}
+async function openSession(name, archived) {
   if (document.body.classList.contains("busy")) return;
   try {
     await api("/api/session/open", { name });
     activeSession = name;
+    activeArchived = !!archived;
     document.body.classList.remove("side-open");
     const hist = await fetch("/api/messages",
       { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
@@ -609,6 +669,144 @@ async function openSession(name) {
     scrollDown(true);
   } catch (e) { /* 错误已由 api() 展示 */ }
 }
+let activeSession = null, activeArchived = false;
+
+/* ---------------- 侧边栏：工作区 ---------------- */
+function shortenPath(p) {
+  const parts = String(p).replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : p;
+}
+async function refreshWorkspaces() {
+  try {
+    const d = await fetch("/api/workspaces",
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    $("#wsPath").textContent = shortenPath(d.current || "");
+    $("#wsPath").title = d.current || "";
+    const list = $("#wsList");
+    list.innerHTML = "";
+    for (const w of d.list || []) {
+      const item = el("div", "ws-item" + (w === d.current ? " current" : ""));
+      item.innerHTML = `<span class="p" title="${esc(w)}">${esc(w)}</span>` +
+        (w === d.current ? `<span class="tag">当前</span>` : "") +
+        (w === d.current ? "" : `<button type="button">切换</button>` +
+          `<button type="button" class="danger">移除</button>`);
+      if (w !== d.current) {
+        const [btnSw, btnRm] = item.querySelectorAll("button");
+        btnSw.addEventListener("click", () =>
+          api("/api/workspace/switch", { path: w }).then(refreshWorkspaces));
+        btnRm.addEventListener("click", () =>
+          api("/api/workspace/remove", { path: w }).then(refreshWorkspaces));
+      }
+      list.appendChild(item);
+    }
+  } catch (e) { /* 静默 */ }
+}
+
+/* ---------------- 设置弹窗（模型 API） ---------------- */
+async function openSettings() {
+  try {
+    const c = await fetch("/api/config",
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    $("#cfgProvider").value = c.provider;
+    $("#cfgBase").value = c.base_url || "";
+    $("#cfgKey").value = "";
+    $("#cfgKey").placeholder = c.api_key_set ? `已配置（****${c.api_key_tail}）— 留空不修改` : "未配置";
+    $("#cfgModel").value = c.model || "";
+    $("#cfgMax").value = c.max_tokens || "";
+    $("#cfgCtx").value = c.context_limit || "";
+    $("#cfgEffort").value = c.reasoning_effort || "";
+    $("#probeOut").textContent = "";
+    $("#settingsModal").hidden = false;
+  } catch (e) { /* 静默 */ }
+}
+$("#btnSettings").addEventListener("click", openSettings);
+document.querySelectorAll(".modal").forEach(m => {
+  m.addEventListener("click", e => {
+    if (e.target === m || e.target.closest("[data-close]")) m.hidden = true;
+  });
+});
+$("#btnSaveCfg").addEventListener("click", async () => {
+  const body = {
+    provider: $("#cfgProvider").value,
+    base_url: $("#cfgBase").value.trim(),
+    model: $("#cfgModel").value.trim(),
+    max_tokens: Number($("#cfgMax").value) || undefined,
+    context_limit: Number($("#cfgCtx").value) || undefined,
+    reasoning_effort: $("#cfgEffort").value,
+    save: $("#cfgSave").checked,
+  };
+  const key = $("#cfgKey").value.trim();
+  if (key) body.api_key = key;
+  try {
+    await api("/api/config", body);
+    $("#settingsModal").hidden = true;
+    refreshStatus();
+  } catch (e) { /* 错误已展示 */ }
+});
+$("#btnProbe").addEventListener("click", async () => {
+  $("#probeOut").textContent = "探测中…";
+  try {
+    const d = await fetch("/api/probe",
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    if (d.error) { $("#probeOut").textContent = d.error; return; }
+    $("#probeOut").textContent = d.rows.map(r => `${r[1] ? "✓" : "✗"} ${r[0]}`).join(" · ");
+  } catch (e) {
+    $("#probeOut").textContent = "探测失败";
+  }
+});
+
+/* ---------------- 工作区弹窗 ---------------- */
+$("#wsCurrent").addEventListener("click", () => {
+  $("#wsModal").hidden = false;
+  refreshWorkspaces();
+});
+$("#btnAddWs").addEventListener("click", async () => {
+  const p = $("#wsInput").value.trim();
+  if (!p) return;
+  try {
+    await api("/api/workspace/add", { path: p });
+    $("#wsInput").value = "";
+    refreshWorkspaces();
+  } catch (e) { /* 错误已展示 */ }
+});
+
+/* ---------------- 通用列表弹窗（回退等） ---------------- */
+function showPickList(title, items, hint, prefix) {
+  $("#listTitle").textContent = title;
+  $("#listHint").textContent = hint || "";
+  const box = $("#pickList");
+  box.innerHTML = "";
+  items.forEach((it, i) => {
+    const b = el("button", "", esc(it));
+    b.addEventListener("click", async () => {
+      $("#listModal").hidden = true;
+      try {
+        const r = await api("/api/command", { line: `${prefix} ${i + 1}` });
+        sysLine("info", r.output || "（完成）");
+      } catch (e) { /* 已展示 */ }
+    });
+    box.appendChild(b);
+  });
+  $("#listModal").hidden = false;
+}
+
+/* ---------------- 计划批准条 ---------------- */
+$("#btnApprovePlan").addEventListener("click", async () => {
+  try {
+    await api("/api/command", { line: "/mode accept-edits" });
+    await api("/api/turn",
+      { prompt: "Plan approved. Start implementing it now, following the plan exactly." });
+  } catch (e) { /* 已展示 */ }
+});
+
+/* 头部 / 侧边栏按钮 */
+$("#modeSel").addEventListener("change", e => api("/api/mode", { mode: e.target.value }));
+$("#btnCompact").addEventListener("click", () => api("/api/compact"));
+$("#btnNew").addEventListener("click", () => {
+  if (confirm("开始新会话？（当前上下文将被清空，历史文件改动不受影响）")) api("/api/clear");
+});
+$("#btnMenu").addEventListener("click", () => document.body.classList.toggle("side-open"));
+$("#sideMask").addEventListener("click", () => document.body.classList.remove("side-open"));
 
 /* 欢迎页建议 chips */
 chat.addEventListener("click", e => {
@@ -643,6 +841,7 @@ chat.addEventListener("click", e => {
     }
   } catch (e) { /* 忽略 */ }
   refreshSessions();
+  refreshWorkspaces();
   connectEvents();
   refreshStatus();
   setInterval(refreshStatus, 2500);

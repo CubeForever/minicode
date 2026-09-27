@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.0 (2026-09-27)
+
+Web 界面产品化——会话管理、多工作区、模型 API 配置、终端功能全量平移（浏览器双主题验证）：
+
+会话管理（侧边栏）：
+- 悬停操作：重命名（✎）、归档（▣）、删除（✕，二次确认）；侧边栏「已归档」分组 + 恢复
+- 接口：`/api/session/archive|unarchive|rename|delete`（名字白名单校验）
+
+多工作区：
+- 侧边栏「工作区」区 + 管理弹窗：添加（绝对路径）/ 切换 / 移除，持久化于 `~/.minicode/workspaces.json`
+- 切换工作区重建 agent（系统提示、brain、shell 状态、检查点全部随工作区刷新）并开启新会话
+- `workspace_lock`：Web 模式下智能体写操作硬拒绝工作区（及 /add-dir 授权目录）之外的路径，yolo 也不例外（bash 无法静态判定，与终端同一局限）
+
+模型 API 配置：
+- ⚙ 设置弹窗：提供方 / Base URL / API Key（脱敏显示 ****tail，留空不改）/ 模型 / max_tokens / 上下文上限 / 思考力度
+- 保存后重建 provider 并保留当前会话与检查点；可选勾选持久化到 ~/.minicode.json（含密钥需主动勾选）
+- 「测试连接」按钮一键运行端点四项探测（models / 非流式 / 流式 / 工具调用）
+
+终端功能全量平移：
+- `/api/command` 分发器：mode/undo/rewind/diff/limit/reasoning/cost/context/tools/todos/brain/memory/export/transcript/plans/agents/skills/mcp/model/models/add-dir/verify/help 等 27 条命令，输出以系统行回显
+- turn 型命令（/init /commit /pr /review 及自定义命令）自动转为回合执行；/rewind 弹出回退点选择器
+- `!命令` 直通本地执行（`/api/shell`）；输入框 `/` 前缀实时命令提示
+- 计划模式批准条：计划生成后一键「批准并实施」（等价 REPL 的 Enter 门）
+
+测试 236 → 241（会话管理 / 命令分发 / 配置 / 工作区 / 边界锁定）。
+
 ## 0.10.3 (2026-09-26)
 
 界面去 AI 味、立品牌——「Ink & Ember」设计系统：近单色 + 发丝线 + 编辑感排版，产品化骨架补齐（浏览器双主题逐屏验证）：

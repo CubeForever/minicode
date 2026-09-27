@@ -6,3 +6,4 @@ build/
 *.egg-info/
 # may contain your API key
 .minicode.json
+.demo-script.json

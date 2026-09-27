@@ -62,6 +62,7 @@ class Config:
     extra_dirs: list = field(default_factory=list)   # /add-dir
     project_restricted: dict = field(default_factory=dict)  # 项目配置中的受限字段（信任门禁后生效）
     plugins_allowed: bool = True                     # 项目信任门禁结果（cli 设置）
+    workspace_lock: bool = False                     # Web 工作区锁定：写操作硬拒绝工作区之外
     append_system_prompt: str = ""                   # --append-system-prompt
     debug: bool = False
     cwd: Optional[Path] = None

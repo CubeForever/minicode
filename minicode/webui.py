@@ -21,22 +21,40 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty, Queue
-from typing import List
+from typing import List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from . import session as session_mod
 from .agent import MODES
+from .llm import LLMError
 from .session import Session
 from .ui import UI
 
 WEB_DIR = Path(__file__).parent / "web"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_WEB = ("index.html", "text/html; charset=utf-8")
 _STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/": _WEB,
+    "/index.html": _WEB,
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "application/javascript; charset=utf-8"),
 }
+WORKSPACES_FILE = Path.home() / ".minicode" / "workspaces.json"
+_SESSION_NAME = re.compile(r"[\w\-]{1,120}")
+
+
+def _load_workspaces() -> dict:
+    try:
+        data = json.loads(WORKSPACES_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_workspaces(data: dict) -> None:
+    WORKSPACES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WORKSPACES_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
 
 
 def _clean(text) -> str:
@@ -156,6 +174,8 @@ class WebUIServer:
                  host="127.0.0.1", port=8765):
         from .cli import _build_agent  # 延迟导入避免循环
         self.cfg = cfg
+        self.cfg.workspace_lock = True   # Web 模式：智能体锁定在当前工作区
+        self._mcp = mcp_manager
         self.bridge = WebBridgeUI()
         self.agent = _build_agent(cfg, provider, session or Session(),
                                   self.bridge, mcp_manager)
@@ -228,6 +248,7 @@ class WebUIServer:
                         "model": outer.cfg.model,
                         "provider": outer.cfg.provider,
                         "mode": outer.cfg.mode,
+                        "cwd": str(outer.cfg.cwd or ""),
                         "messages": len(s.messages),
                         "context_tokens": s.context_tokens(),
                         "context_limit": outer.cfg.context_limit,
@@ -239,7 +260,25 @@ class WebUIServer:
                     return self._json(200, {"messages": s.messages,
                                             "todos": s.todos})
                 if path == "/api/sessions":
-                    return self._json(200, {"sessions": outer._list_sessions()})
+                    return self._json(200, {"sessions": outer._list_sessions(),
+                                            "archived": outer._list_archived()})
+                if path == "/api/workspaces":
+                    ws = _load_workspaces().get("workspaces") or []
+                    current = str(outer.cfg.cwd or "")
+                    ordered = [current] + [w for w in ws if w != current]
+                    return self._json(200, {"current": current, "list": ordered})
+                if path == "/api/config":
+                    cfg = outer.cfg
+                    return self._json(200, {
+                        "provider": cfg.provider,
+                        "base_url": cfg.base_url,
+                        "model": cfg.model,
+                        "api_key_set": bool(cfg.api_key),
+                        "api_key_tail": cfg.api_key[-4:] if cfg.api_key else "",
+                        "max_tokens": cfg.max_tokens,
+                        "context_limit": cfg.context_limit,
+                        "reasoning_effort": cfg.reasoning_effort,
+                        "timeout": cfg.timeout})
                 return self._json(404, {"error": "not found"})
 
             def _static(self, fname: str, ctype: str):
@@ -323,7 +362,7 @@ class WebUIServer:
                     return self._json(200, {"ok": True})
                 if path == "/api/session/open":
                     name = str(body.get("name") or "")
-                    if not re.fullmatch(r"[\w\-]{1,120}", name):
+                    if not _SESSION_NAME.fullmatch(name):
                         return self._json(400, {"error": "invalid session name"})
                     path_ = session_mod.SESSIONS_DIR / f"{name}.json"
                     if not path_.exists():
@@ -337,6 +376,48 @@ class WebUIServer:
                     outer.agent.replace_session(loaded)
                     return self._json(200, {"ok": True, "name": name,
                                             "messages": len(loaded.messages)})
+                if path in ("/api/session/delete", "/api/session/archive",
+                            "/api/session/unarchive"):
+                    return self._json(*outer._session_manage(path, body))
+                if path == "/api/session/rename":
+                    return self._json(*outer._session_rename(body))
+                if path == "/api/workspace/add":
+                    return self._json(*outer._workspace_add(body))
+                if path == "/api/workspace/remove":
+                    return self._json(*outer._workspace_remove(body))
+                if path == "/api/workspace/switch":
+                    return self._json(*outer._workspace_switch(body))
+                if path == "/api/config":
+                    return self._json(*outer._config_update(body))
+                if path == "/api/probe":
+                    if outer.busy:
+                        return self._json(409, {"error": "a turn is running"})
+                    from .llm import probe_provider
+                    rows = probe_provider(outer.agent.provider)
+                    return self._json(200, {"rows": [[n, ok, d, round(sec, 1)]
+                                                     for n, ok, d, sec in rows]})
+                if path == "/api/command":
+                    line = str(body.get("line") or "").strip()
+                    if not line:
+                        return self._json(400, {"error": "command is required"})
+                    try:
+                        return self._json(200, outer._dispatch_command(line))
+                    except LLMError as e:
+                        return self._json(200, {"error": str(e)})
+                    except Exception as e:
+                        return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+                if path == "/api/shell":
+                    command = str(body.get("command") or "").strip()
+                    if not command:
+                        return self._json(400, {"error": "command is required"})
+                    bash = outer.agent.registry.get("bash")
+                    if bash is None:
+                        return self._json(400, {"error": "bash tool unavailable"})
+                    out = bash.run({"command": command}, outer.agent.ctx)
+                    outer._emit({"t": "plain", "text": f"$ {command}"})
+                    outer._emit({"t": "plain", "text": out})
+                    return self._json(200, {"ok": True})
+                return self._json(404, {"error": "not found"})
                 if path == "/api/compact":
                     if outer.busy:
                         return self._json(409, {"error": "a turn is running"})
@@ -359,8 +440,22 @@ class WebUIServer:
     @staticmethod
     def _list_sessions(limit: int = 50) -> list:
         """~/.minicode/sessions 里的历史会话（新→旧），供侧边栏。"""
+        return WebUIServer._list_session_dir(session_mod.SESSIONS_DIR, limit)
+
+    @staticmethod
+    def _list_archived(limit: int = 50) -> list:
+        return WebUIServer._list_session_dir(session_mod.SESSIONS_DIR / "archived",
+                                             limit)
+
+    @staticmethod
+    def _list_session_dir(base: Path, limit: int) -> list:
         out = []
-        for p in session_mod.Session.list_sessions(limit):
+        if not base.is_dir():
+            return out
+        files = sorted(base.glob("*.json"),
+                       key=lambda p: p.stat().st_mtime if p.exists() else 0,
+                       reverse=True)
+        for p in files[:limit]:
             stamp, _, slug = p.stem.partition("_")
             title = slug if slug and slug != "session" else stamp
             try:
@@ -370,6 +465,333 @@ class WebUIServer:
                 when = ""
             out.append({"name": p.stem, "title": title[:60], "time": when})
         return out
+
+    def _session_manage(self, path: str, body: dict):
+        name = str(body.get("name") or "")
+        if not _SESSION_NAME.fullmatch(name):
+            return 400, {"error": "invalid session name"}
+        archived_dir = session_mod.SESSIONS_DIR / "archived"
+        base = archived_dir if path == "/api/session/unarchive" or \
+            body.get("archived") else session_mod.SESSIONS_DIR
+        f = base / f"{name}.json"
+        if not f.exists():
+            return 404, {"error": "session not found"}
+        try:
+            if path == "/api/session/delete":
+                f.unlink()
+                return 200, {"ok": True, "deleted": name}
+            if path == "/api/session/archive":
+                archived_dir.mkdir(parents=True, exist_ok=True)
+                f.rename(archived_dir / f.name)
+                return 200, {"ok": True, "archived": name}
+            if path == "/api/session/unarchive":
+                f.rename(session_mod.SESSIONS_DIR / f.name)
+                return 200, {"ok": True, "unarchived": name}
+        except OSError as e:
+            return 500, {"error": str(e)}
+        return 404, {"error": "not found"}
+
+    def _session_rename(self, body: dict):
+        name = str(body.get("name") or "")
+        title = str(body.get("title") or "").strip()
+        archived = bool(body.get("archived"))
+        if not _SESSION_NAME.fullmatch(name) or not title:
+            return 400, {"error": "name and title are required"}
+        base = (session_mod.SESSIONS_DIR / "archived") if archived \
+            else session_mod.SESSIONS_DIR
+        f = base / f"{name}.json"
+        if not f.exists():
+            return 404, {"error": "session not found"}
+        stamp = name.partition("_")[0]
+        slug = re.sub(r"[^\w\-]+", "-", title).strip("-") or "session"
+        target = base / f"{stamp}_{slug}.json"
+        if target.exists():
+            return 409, {"error": "target name already exists"}
+        f.rename(target)
+        return 200, {"ok": True, "name": target.stem}
+
+    def _workspace_add(self, body: dict):
+        raw = str(body.get("path") or "").strip()
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            return 400, {"error": "需要绝对路径"}
+        p = p.resolve()
+        if not p.is_dir():
+            return 400, {"error": f"目录不存在：{p}"}
+        data = _load_workspaces()
+        ws = data.setdefault("workspaces", [])
+        if str(p) not in ws:
+            ws.append(str(p))
+            _save_workspaces(data)
+        return 200, {"ok": True, "list": ws}
+
+    def _workspace_remove(self, body: dict):
+        raw = str(body.get("path") or "").strip()
+        p = str(Path(raw).expanduser().resolve())
+        if p == str(self.cfg.cwd or ""):
+            return 400, {"error": "不能移除当前工作区"}
+        data = _load_workspaces()
+        ws = [w for w in (data.get("workspaces") or []) if w != p]
+        data["workspaces"] = ws
+        _save_workspaces(data)
+        return 200, {"ok": True, "list": ws}
+
+    def _workspace_switch(self, body: dict):
+        raw = str(body.get("path") or "").strip()
+        p = Path(raw).expanduser().resolve()
+        if not p.is_dir():
+            return 400, {"error": f"目录不存在：{p}"}
+        with self._lock:
+            if self.busy:
+                return 409, {"error": "a turn is running"}
+        data = _load_workspaces()
+        ws = data.setdefault("workspaces", [])
+        if str(p) not in ws:
+            ws.append(str(p))
+        data["last"] = str(p)
+        _save_workspaces(data)
+        self._rebuild(cwd=p, new_session=True)
+        self._emit({"t": "workspace", "path": str(p)})
+        return 200, {"ok": True, "cwd": str(p)}
+
+    def _config_update(self, body: dict):
+        from .config import USER_CONFIG
+        cfg = self.cfg
+        if self.busy:
+            return 409, {"error": "a turn is running"}
+        if body.get("provider") in ("openai", "anthropic"):
+            cfg.provider = body["provider"]
+        if body.get("base_url") is not None:
+            cfg.base_url = str(body["base_url"]).strip()
+        if body.get("api_key"):
+            cfg.api_key = str(body["api_key"]).strip()
+        if body.get("model"):
+            cfg.model = str(body["model"]).strip()
+        if body.get("max_tokens"):
+            cfg.max_tokens = int(body["max_tokens"])
+        if body.get("context_limit"):
+            cfg.context_limit = int(body["context_limit"])
+        if body.get("reasoning_effort") in ("", "low", "medium", "high"):
+            cfg.reasoning_effort = body["reasoning_effort"]
+        if body.get("save"):
+            try:
+                data = {}
+                if USER_CONFIG.exists():
+                    data = json.loads(USER_CONFIG.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    data = {}
+                data.update({"provider": cfg.provider, "base_url": cfg.base_url,
+                             "model": cfg.model,
+                             "max_tokens": cfg.max_tokens,
+                             "context_limit": cfg.context_limit,
+                             "reasoning_effort": cfg.reasoning_effort})
+                if body.get("api_key"):
+                    data["api_key"] = cfg.api_key
+                USER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+                USER_CONFIG.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+            except OSError as e:
+                return 500, {"error": f"保存配置失败：{e}"}
+        self._rebuild(new_session=False)   # 保留当前会话，重建 provider/agent
+        self._emit({"t": "info",
+                    "text": f"模型配置已更新：{cfg.provider} · {cfg.model}"
+                            + ("（已保存到 ~/.minicode.json）" if body.get("save") else "")})
+        return 200, {"ok": True, "model": cfg.model}
+
+    def _rebuild(self, cwd: Optional[Path] = None, new_session: bool = False) -> None:
+        """切换工作区 / 更新模型配置后重建 agent（provider、系统提示、
+        brain、检查点随之刷新）。new_session=False 时保留当前会话与检查点。"""
+        from .cli import _build_agent
+        from .llm import make_provider
+        old = self.agent
+        if self._mcp is not None:
+            self._mcp.stop_all()
+        if cwd is not None:
+            self.cfg.cwd = Path(cwd)
+        provider = make_provider(self.cfg)
+        session = Session() if new_session else old.session
+        self.agent = _build_agent(self.cfg, provider, session,
+                                  self.bridge, self._mcp)
+        if not new_session:
+            self.agent.checkpoints = old.checkpoints   # 保留 /undo 历史
+
+    def _dispatch_command(self, line: str) -> dict:
+        """终端斜杠命令的 Web 分发器。返回 {output} / {list} / {turn}。"""
+        from .cli import (_custom_commands, _parse_size, COMMIT_PROMPT,
+                          INIT_PROMPT, PR_PROMPT)
+        from .llm import list_models
+        from .prompts import REVIEW_PROMPT, build_system_prompt
+        from .tools.memory import brain_path, load_brain_text
+        agent, cfg = self.agent, self.cfg
+        s = agent.session
+        name, _, arg = line.lstrip("/").partition(" ")
+        name, arg = name.lower().strip(), arg.strip()
+
+        aliases = {"yolo": "full-access", "plan": "plan", "edits": "accept-edits"}
+        if name in aliases:
+            arg = aliases[name]
+            name = "mode"
+        if name == "mode":
+            if arg in MODES:
+                cfg.mode = arg
+            return {"output": f"权限模式：{cfg.mode}"}
+        if name == "undo":
+            e = agent.checkpoints.undo() if agent.checkpoints else None
+            return {"output": f"已撤销 {e['tool']} 对 {e['path']} 的修改。" if e
+                    else "没有可撤销的更改。"}
+        if name == "rewind":
+            shown = agent.checkpoints.list(10) if agent.checkpoints else []
+            if arg.isdigit():
+                if not (1 <= int(arg) <= len(shown)):
+                    return {"output": f"序号超出范围（1-{len(shown)}）"}
+                undone = agent.checkpoints.rewind_to(int(arg) - 1, shown)
+                return {"output": f"已回退 {len(undone)} 步文件修改。"}
+            return {"list": [f"{i}. {e['time']} {e['tool']} {e['path']}"
+                             for i, e in enumerate(shown, 1)],
+                    "hint": "点击条目回退，或用 /rewind <序号>"}
+        if name == "diff":
+            diffs = agent.checkpoints.session_diff() if agent.checkpoints else []
+            if not diffs:
+                return {"output": "本次会话没有未还原的文件改动。"}
+            out = []
+            for path_, diff in diffs:
+                out.append(path_ + ":")
+                out.extend("  " + ln for ln in diff.splitlines()[:60])
+            return {"output": "\n".join(out)}
+        if name == "limit":
+            if not arg:
+                return {"output": f"上下文长度：{cfg.context_limit:,} tok"}
+            n = _parse_size(arg)
+            if not n or n < 1000:
+                return {"output": "无法解析——示例：/limit 1M、/limit 500k"}
+            cfg.context_limit = n
+            return {"output": f"上下文长度已设置为 {n:,} tok"}
+        if name == "reasoning":
+            order = ["", "low", "medium", "high"]
+            if arg in order:
+                cfg.reasoning_effort = arg
+            else:
+                cur = order.index(cfg.reasoning_effort or "")
+                cfg.reasoning_effort = order[(cur + 1) % len(order)]
+            if hasattr(agent.provider, "reasoning_effort"):
+                agent.provider.reasoning_effort = cfg.reasoning_effort
+            return {"output": f"reasoning effort：{cfg.reasoning_effort or '默认'}"}
+        if name == "cost":
+            t = s.total_usage
+            return {"output": f"累计 tokens：in {t['input']:,} · out {t['output']:,}"}
+        if name == "context":
+            by = {}
+            for m in s.messages:
+                k = m.get("role") or "?"
+                by[k] = by.get(k, 0) + s._content_chars(m.get("content"))
+                for tc in m.get("tool_calls") or []:
+                    by[k] += len(tc.get("args") or "")
+            lines = [f"{k:<10} ~{v // 3:,} tok" for k, v in by.items()]
+            lines.append(f"合计 ~{s.context_tokens():,} tok "
+                         f"(上限 {cfg.context_limit:,})")
+            return {"output": "\n".join(lines) or "(空)"}
+        if name == "tools":
+            return {"output": "\n".join(
+                f"{t.name:<22} [{t.kind}] {t.description.splitlines()[0][:60]}"
+                for t in agent.registry.tools.values())}
+        if name == "todos":
+            if not s.todos:
+                return {"output": "当前没有任务清单。"}
+            return {"output": "\n".join(f"[{t.get('status')}] {t.get('content')}"
+                                        for t in s.todos)}
+        if name == "brain":
+            if arg == "clear":
+                p = brain_path(cfg.cwd)
+                if p.exists():
+                    p.unlink()
+                agent.system_prompt = build_system_prompt(
+                    cfg, agent._prompt_cwd, agent._custom_agents)
+                return {"output": "项目大脑已清空。"}
+            text = load_brain_text(cfg.cwd).strip()
+            return {"output": text[:3000] or "大脑还是空的。"}
+        if name == "memory":
+            p = cfg.cwd / "MINICODE.md"
+            if not p.exists():
+                return {"output": "MINICODE.md 不存在（/init 可生成）。"}
+            return {"output": p.read_text(encoding="utf-8",
+                                          errors="replace")[:4000]}
+        if name == "export":
+            out = cfg.cwd / f"minicode-chat-{time.strftime('%Y%m%d-%H%M%S')}.md"
+            s.export_markdown(out)
+            return {"output": f"已导出到 {out}"}
+        if name == "transcript":
+            rows = []
+            for m in s.messages[-16:]:
+                body = m.get("content")
+                text = body if isinstance(body, str) else "(多部分内容)"
+                rows.append(f"[{m.get('role')}] {' '.join((text or '').split())[:120]}")
+            return {"output": "\n".join(rows) or "会话为空。"}
+        if name == "plans":
+            from . import plans as _plans
+            rows = _plans.list_plans(cfg.cwd)
+            if not rows:
+                return {"output": "还没有存档计划。"}
+            return {"output": "\n".join(f"[{i}] ({st}) {t}"
+                                        for i, p, st, t in rows)}
+        if name == "agents":
+            rows = ["dispatch_agent（内置只读调研）"]
+            rows += [f"{n}：{info.get('description', '')}"
+                     for n, info in (agent._custom_agents or {}).items()]
+            return {"output": "\n".join(rows)}
+        if name == "skills":
+            from .tools.skills import skills_catalog
+            catalog = skills_catalog(cfg.cwd)
+            return {"output": "\n".join(f"{n}：{desc}" for n, (desc, _) in
+                                        catalog.items()) or "没有可用技能。"}
+        if name == "mcp":
+            if agent.mcp is None:
+                return {"output": "未配置 MCP。"}
+            return {"output": "\n".join(agent.mcp.status_lines())}
+        if name == "model":
+            if arg:
+                cfg.model = arg
+                agent.provider.model = arg
+                return {"output": f"模型已切换为 {arg}"}
+            return {"output": f"当前模型：{cfg.model}（provider: {cfg.provider}）"}
+        if name == "models":
+            ids = list_models(agent.provider)
+            return {"output": f"{len(ids)} 个模型：\n" + "\n".join(ids[:30])}
+        if name == "add-dir":
+            p = Path(arg).expanduser().resolve()
+            if not p.is_dir():
+                return {"output": f"目录不存在：{p}"}
+            cfg.extra_dirs.append(str(p))
+            agent.system_prompt = build_system_prompt(
+                cfg, agent._prompt_cwd, agent._custom_agents)
+            return {"output": f"已授权访问目录：{p}"}
+        if name == "verify":
+            if not arg:
+                return {"output": f"自检命令：{cfg.verify_command or '未设置'}"
+                        "（/verify pytest -q 开启；/verify off 关闭）"}
+            if arg.lower() == "off":
+                cfg.verify_command = ""
+                return {"output": "自检已关闭。"}
+            cfg.verify_command = arg
+            return {"output": f"自检命令已设置：{arg} —— 每次文件改动后自动执行"}
+        if name == "help":
+            return {"output": "\n".join(
+                "/mode /undo /rewind /diff /limit /reasoning /cost /context "
+                "/tools /todos /brain /memory /export /transcript /plans "
+                "/agents /skills /mcp /model /models /add-dir /verify "
+                "/init /commit /pr /review /help —— /init /commit /pr /review "
+                "会发起一个回合；!cmd 直通本地执行")}
+        if name in ("init", "commit", "pr", "review"):
+            prompts = {"init": INIT_PROMPT,
+                       "commit": COMMIT_PROMPT.format(files_hint="", extra=""),
+                       "pr": PR_PROMPT.format(base=arg or "main"),
+                       "review": REVIEW_PROMPT.format(target="本会话改动", extra="")}
+            return {"turn": prompts[name]}
+        custom = _custom_commands().get(name)
+        if custom:
+            return {"turn": custom[1].replace("$ARGUMENTS", arg)
+                    .replace("{args}", arg)}
+        return {"error": f"未知命令 /{name}（/help 查看可用命令）"}
 
     def _emit(self, event: dict) -> None:
         self.bridge._emit(event)
