@@ -136,9 +136,45 @@ function scrollDown(force) {
   if (near || force) m.scrollTop = m.scrollHeight;
 }
 
+/* ---------------- 工单（Job Ticket）：一个回合 = 一张工单 ---------------- */
+let ticket = null, ticketNo = 0, ticketErr = false;
+const padNo = n => String(n).padStart(3, "0");
+function startTicket(time) {
+  closeTicket();
+  hideHero();
+  if (chat.querySelector(".ticket")) {           // 工单之间的打孔撕裂线
+    chat.appendChild(el("div", "perf"));
+  }
+  ticketNo += 1;
+  const t = el("section", "ticket");
+  t.innerHTML = `<div class="tk-head">` +
+    `<span class="tk-no mono">Nº ${padNo(ticketNo)}</span>` +
+    (time ? `<span class="tk-time mono">${esc(time)}</span>` : "") +
+    `<span class="barcode"></span>` +
+    `<span class="tk-stamp mono" hidden></span></div>` +
+    `<div class="tk-body"></div>`;
+  chat.appendChild(t);
+  ticket = { el: t, body: t.querySelector(".tk-body"), err: false };
+  return ticket;
+}
+function ticketBody() { if (!ticket) startTicket(null); return ticket.body; }
+function setTicketStamp(t, kind) {
+  const s = t.el.querySelector(".tk-stamp");
+  if (!s) return;
+  s.hidden = false;
+  s.textContent = kind;
+  s.classList.remove("ok", "run", "warn");
+  s.classList.add(kind === "DONE" ? "ok" : kind === "RUNNING" ? "run" : "warn");
+}
+function closeTicket(stamp) {
+  if (!ticket) return;
+  if (stamp) setTicketStamp(ticket, stamp);
+  ticket = null;
+}
 function addUser(text) {
   hideHero();
-  chat.appendChild(el("div", "msg user", esc(text)));
+  if (!ticket) startTicket(nowHM());
+  ticket.body.appendChild(el("div", "msg user", esc(text)));
   scrollDown(true);
 }
 
@@ -149,7 +185,7 @@ function showShimmer(label) {
   if (shimmerEl) return;
   shimmerEl = el("div", "working-row",
     `<span class="lbl">${esc(label)}</span><span class="dots"><i></i><i></i><i></i></span>`);
-  chat.appendChild(shimmerEl);
+  ticketBody().appendChild(shimmerEl);
   scrollDown();
 }
 function hideShimmer() {
@@ -166,7 +202,7 @@ function newAssistant() {
     `<span class="ts">${nowHM()}</span>`));
   const mdEl = el("div", "md");
   wrap.appendChild(mdEl);
-  chat.appendChild(wrap);
+  ticketBody().appendChild(wrap);
   current = { el: wrap, md: mdEl, think: null, thinkStart: 0, thinkDone: false,
               raw: "", timer: null };
   current.timer = setInterval(() => {
@@ -290,14 +326,15 @@ function addTool(name, summary) {
     card.classList.toggle("open");
     card.querySelector(".tool-result").hidden = !card.classList.contains("open");
   });
-  chat.appendChild(card);
+  ticketBody().appendChild(card);
   resultQueue.push(card);
   scrollDown();
 }
 function attachResult(text) {
   let t = resultQueue.shift();
   if (!t) {
-    const cards = chat.querySelectorAll(".tool-card");
+    const scope = ticket ? ticket.body : chat;
+    const cards = scope.querySelectorAll(".tool-card");
     t = cards.length ? cards[cards.length - 1] : null;
   }
   if (!t) { sysLine("plain", text); return; }
@@ -318,7 +355,9 @@ function attachResult(text) {
 function sysLine(kind, text) {
   if (!text) return;
   hideHero();
-  chat.appendChild(el("div", `sysline ${kind}`, esc(text)));
+  // 系统行不属于任何工单：无开启的工单时直接挂在聊天层
+  const target = ticket ? ticket.body : chat;
+  target.appendChild(el("div", `sysline ${kind}`, esc(text)));
   scrollDown();
 }
 function renderTodos(todos) {
@@ -327,7 +366,7 @@ function renderTodos(todos) {
   const mark = { completed: "✓", in_progress: "→", pending: "○" };
   const rows = todos.map(t =>
     `<div class="t-${esc(t.status)}">${mark[t.status] || "○"} ${esc(t.content)}</div>`).join("");
-  chat.appendChild(el("div", "todo-card", `<b>To-dos</b>${rows}`));
+  ticketBody().appendChild(el("div", "todo-card", `<b>To-dos</b>${rows}`));
   scrollDown();
 }
 
@@ -341,7 +380,8 @@ function renderConfirm(id, title, preview) {
     const cls = /^\s*\+/.test(ln) ? "add" : (/^\s*-/.test(ln) ? "del" : "");
     return cls ? `<span class="${cls}">${esc(ln)}</span>` : esc(ln);
   }).join("\n") : "";
-  card.innerHTML = `<div class="confirm-title">` +
+  card.innerHTML = `<span class="stamp-line mono">SIGN-OFF · 签核</span>` +
+    `<div class="confirm-title">` +
     `<span class="warn-ico">⚠</span>${esc(title)}</div>` +
     (preview ? `<pre class="preview">${pv}</pre>` : "") +
     `<div class="actions">` +
@@ -352,7 +392,7 @@ function renderConfirm(id, title, preview) {
     const b = e.target.closest("button");
     if (b) answerAsk(id, b.dataset.v, card);
   });
-  chat.appendChild(card);
+  ticketBody().appendChild(card);
   scrollDown(true);
 }
 
@@ -405,7 +445,7 @@ function renderChoose(id, question, options, multi, allowOther) {
     row.appendChild(ok);
     card.appendChild(row);
   }
-  chat.appendChild(card);
+  ticketBody().appendChild(card);
   scrollDown(true);
 }
 async function answerAsk(id, value, card) {
@@ -443,8 +483,17 @@ async function getStatus() {
 function setBusy(b) {
   document.body.classList.toggle("busy", b);
   $("#btnSend").disabled = b;
-  if (!b) { hideShimmer(); closeCurrent(); refreshSessions(); }
-  else showShimmer("minicode 正在工作");
+  if (!b) {
+    hideShimmer();
+    closeCurrent();
+    const stamp = ticket && ticket.err ? "ERRORS" : "DONE";
+    closeTicket(ticketErr ? "ERRORS" : stamp);
+    ticketErr = false;
+    refreshSessions();
+  } else {
+    showShimmer("minicode 正在工作");
+    if (ticket) setTicketStamp(ticket, "RUNNING");
+  }
 }
 async function refreshStatus() {
   try {
@@ -489,14 +538,15 @@ function connectEvents() {
       case "result": attachResult(e.text); break;
       case "info": sysLine("info", e.text); break;
       case "warn": sysLine("warn", e.text); break;
-      case "error": sysLine("error", e.text); break;
+      case "error": sysLine("error", e.text); if (ticket) ticket.err = true; break;
       case "plain": sysLine("plain", e.text); break;
       case "tokens": break;                       // 状态轮询已覆盖
       case "todos": renderTodos(e.todos); break;
       case "confirm": renderConfirm(e.id, e.title, e.preview); break;
       case "choose": renderChoose(e.id, e.question, e.options, e.multi, e.allow_other); break;
       case "busy": setBusy(e.busy); break;
-      case "workspace": chat.innerHTML = ""; sysLine("info", "工作区已切换：" + e.path);
+      case "workspace": chat.innerHTML = ""; ticket = null; ticketNo = 0;
+        sysLine("info", "工作区已切换：" + e.path);
         refreshWorkspaces(); refreshSessions(); break;
       case "cleared": location.reload(); break;
     }
@@ -522,10 +572,17 @@ function addHistoryThink(wrap, body) {
   wrap.appendChild(think);
 }
 function renderHistory(data) {
+  ticketNo = 0;                                   // 历史回放重新编号
+  let groupHasError = false;
   for (const m of data.messages || []) {
     if (m.role === "user") {
-      addUser(typeof m.content === "string" ? m.content : "(多部分内容)");
+      closeTicket(groupHasError ? "ERRORS" : "DONE");
+      groupHasError = false;
+      startTicket();
+      ticket.body.appendChild(el("div", "msg user",
+        esc(typeof m.content === "string" ? m.content : "(多部分内容)")));
     } else if (m.role === "assistant") {
+      if (!ticket) startTicket();
       const wrap = el("div", "msg assistant");
       wrap.appendChild(el("div", "msg-meta",
         `<span class="who-mark">❯</span><span class="who">minicode</span>`));
@@ -535,7 +592,7 @@ function renderHistory(data) {
         wrap.appendChild(mdEl);
         addCopyAction(wrap, () => m.content);
       }
-      chat.appendChild(wrap);
+      ticket.body.appendChild(wrap);
       for (const tc of m.tool_calls || []) addTool(tc.name, argsSummary(tc.args));
     } else if (m.role === "tool") {
       const body = typeof m.content === "string" ? m.content
@@ -543,8 +600,11 @@ function renderHistory(data) {
           ? m.content.filter(b => b.type === "text").map(b => b.text).join("\n")
           : "");
       attachResult(body || (m.is_error ? "(错误)" : ""));
+      if (m.is_error) groupHasError = true;
     }
   }
+  closeTicket(groupHasError ? "ERRORS" : "DONE");
+  ticketErr = false;
   renderTodos(data.todos);
 }
 
@@ -679,6 +739,7 @@ async function openSession(name, archived) {
     const hist = await fetch("/api/messages",
       { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
     chat.innerHTML = "";
+    ticket = null; ticketNo = 0;
     renderHistory(hist);
     hideHero();
     refreshSessions();

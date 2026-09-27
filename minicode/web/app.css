@@ -1246,3 +1246,86 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
   max-height: 420px;
   overflow-y: auto;
 }
+
+/* ---------------- 工单（Job Ticket）：回合即工单 ---------------- */
+.ticket {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 12px 16px 16px;
+  box-shadow: var(--inset);
+  animation: fadeUp .3s ease both;
+}
+.tk-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 9px;
+  margin-bottom: 13px;
+  border-bottom: 1px dashed var(--border2);
+}
+.tk-no {
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: .1em;
+  color: var(--accent);
+}
+.tk-time { color: var(--faint); font-size: 11px; }
+.barcode {
+  margin-left: auto;
+  width: 64px; height: 14px;
+  background: repeating-linear-gradient(90deg,
+    var(--text) 0 2px, transparent 2px 4px,
+    var(--text) 4px 5px, transparent 5px 10px);
+  opacity: .3;
+}
+.tk-stamp {
+  border: 1.5px solid var(--ok);
+  color: var(--ok);
+  padding: 1px 9px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: .14em;
+  transform: rotate(-2deg);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.tk-stamp.run { color: var(--accent); border-color: var(--accent); animation: pulse 1.4s infinite; }
+.tk-stamp.warn { color: var(--warn); border-color: var(--warn); }
+.tk-body { display: flex; flex-direction: column; gap: 13px; }
+.tk-body .msg.user {
+  align-self: stretch;
+  max-width: 100%;
+  background: var(--bubble);
+  border: 1px solid var(--bubble-border);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 9px 9px 9px;
+}
+/* 撕裂线（打孔） */
+.perf {
+  position: relative;
+  height: 0;
+  margin: 22px -20px;
+  border-top: 1.5px dashed var(--border2);
+}
+.perf::before, .perf::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+}
+.perf::before { left: -7px; }
+.perf::after { right: -7px; }
+/* 签核标签 */
+.confirm-card .stamp-line {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
