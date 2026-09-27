@@ -14,35 +14,37 @@
     <span class="name">minicode</span>
     <span class="ver mono">v__VERSION__</span>
   </div>
-  <button class="newchat" id="btnNew">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    新会话
-  </button>
-  <div class="side-section ws-section">
-    <div class="side-label mono">工作区</div>
-    <button class="ws-current" id="wsCurrent" title="切换 / 管理工作区" aria-label="切换或管理工作区">
-      <span class="ws-path mono" id="wsPath">…</span>
-      <svg class="arr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 15 12 20 17 15"/><polyline points="7 9 12 4 17 9"/></svg>
+
+  <div class="side-actions">
+    <button id="btnExt" class="side-btn ghost" aria-label="打开扩展面板">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+      扩展
+    </button>
+    <button id="btnNew" class="side-btn primary">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      新会话
     </button>
   </div>
+
+  <button class="ws-current" id="wsCurrent" title="切换 / 管理工作区" aria-label="切换或管理工作区">
+    <svg class="ws-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    <span class="ws-path mono" id="wsPath">…</span>
+    <svg class="arr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 15 12 20 17 15"/><polyline points="7 9 12 4 17 9"/></svg>
+  </button>
+
   <div class="side-section">
     <div class="side-label mono">历史会话</div>
     <div class="session-list" id="sessions" role="list">
       <div class="side-empty">暂无历史会话</div>
     </div>
   </div>
+
   <div class="side-foot">
     <span class="mono">本地运行 · 零依赖</span>
-    <span class="side-foot-btns">
-      <button id="btnExt" class="side-settings" title="技能 / 插件 / 子智能体 / MCP" aria-label="打开扩展面板">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
-        扩展
-      </button>
-      <button id="btnSettings" class="side-settings" title="模型 API 配置" aria-label="打开模型设置">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-        设置
-      </button>
-    </span>
+    <button id="btnSettings" class="side-settings" title="模型 API 配置" aria-label="打开模型设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      设置
+    </button>
   </div>
 </aside>
 <div class="side-mask" id="sideMask"></div>
@@ -52,7 +54,7 @@
     <button class="iconbtn menu" id="btnMenu" title="会话列表" aria-label="打开会话列表">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
-    <span id="model" class="model-badge mono" title="当前模型">…</span>
+    <button id="model" class="model-badge mono" title="模型 API 配置">…</button>
     <div class="head-right">
       <div class="ctx" title="上下文占用">
         <div class="ctxbar"><div id="ctxFill" class="ctxfill"></div></div>
@@ -92,21 +94,23 @@
     </div>
     <div class="cmdhint" id="cmdHint" hidden></div>
     <div class="input-card">
-      <textarea id="input" rows="1" placeholder="输入任务、/命令 或 !命令…"></textarea>
-      <button id="btnSend" class="send" title="发送" aria-label="发送">↑</button>
+      <div class="input-line">
+        <textarea id="input" rows="1" placeholder="输入任务、/命令 或 !命令…"></textarea>
+        <button id="btnSend" class="send" title="发送" aria-label="发送">↑</button>
+      </div>
+      <div class="composer-row mono">
+        <span class="st"><span id="conn" class="conn"></span><span id="connText">已连接</span></span>
+        <select id="modeSel" title="权限模式">
+          <option value="default">确认模式</option>
+          <option value="accept-edits">自动接受编辑</option>
+          <option value="plan">计划模式</option>
+          <option value="full-access">完全访问</option>
+        </select>
+        <span class="grow"></span>
+        <span id="usage" title="累计输入 / 输出 tokens · 上下文占用"></span>
+      </div>
     </div>
   </footer>
-
-  <div class="statusbar mono">
-    <span class="st"><span id="conn" class="conn"></span><span id="connText">连接中…</span></span>
-    <select id="modeSel" title="权限模式">
-      <option value="default">确认模式</option>
-      <option value="accept-edits">自动接受编辑</option>
-      <option value="plan">计划模式</option>
-      <option value="full-access">完全访问</option>
-    </select>
-    <span class="st-right dim" id="usage"></span>
-  </div>
 </div>
 
 <!-- 模型 API 设置 -->

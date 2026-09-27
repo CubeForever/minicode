@@ -462,11 +462,12 @@ class WebUIServer:
             stamp, _, slug = p.stem.partition("_")
             title = slug if slug and slug != "session" else stamp
             try:
-                when = time.strftime("%m-%d %H:%M",
-                                     time.localtime(p.stat().st_mtime))
+                ts = int(p.stat().st_mtime)
+                when = time.strftime("%m-%d %H:%M", time.localtime(ts))
             except OSError:
-                when = ""
-            out.append({"name": p.stem, "title": title[:60], "time": when})
+                ts, when = 0, ""
+            out.append({"name": p.stem, "title": title[:60], "time": when,
+                        "ts": ts})
         return out
 
     def _session_manage(self, path: str, body: dict):

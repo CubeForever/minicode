@@ -630,13 +630,26 @@ async function refreshSessions() {
       return;
     }
     if (d.archived && d.archived.length) {
-      const label = el("div", "side-label mono", "已归档");
-      box.appendChild(label);
+      box.appendChild(el("div", "sess-group", "已归档"));
       for (const s of d.archived) box.appendChild(mkRow(s, true));
-      const sep = el("div", "side-label mono", "未归档");
-      box.appendChild(sep);
+      box.appendChild(el("div", "sess-group", "未归档"));
     }
-    for (const s of d.sessions || []) box.appendChild(mkRow(s, false));
+    // 按日期分组：今天 / 近 7 天 / 更早
+    const groups = [[], [], []];
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const weekStart = dayStart.getTime() - 6 * 86400000;
+    for (const s of d.sessions || []) {
+      const ts = (s.ts || 0) * 1000;
+      if (ts >= dayStart.getTime()) groups[0].push(s);
+      else if (ts >= weekStart) groups[1].push(s);
+      else groups[2].push(s);
+    }
+    const names = ["今天", "近 7 天", "更早"];
+    groups.forEach((items, i) => {
+      if (!items.length) return;
+      box.appendChild(el("div", "sess-group", names[i]));
+      for (const s of items) box.appendChild(mkRow(s, false));
+    });
   } catch (e) { /* 服务未就绪时静默 */ }
 }
 function actBtn(glyph, title, fn, danger) {
@@ -723,6 +736,7 @@ async function openSettings() {
   } catch (e) { /* 静默 */ }
 }
 $("#btnSettings").addEventListener("click", openSettings);
+$("#model").addEventListener("click", openSettings);
 
 /* ---------------- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP ---------------- */
 $("#btnExt").addEventListener("click", async () => {
