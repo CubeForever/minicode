@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.11.0 · 20 个内置工具 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置全管理） · 241 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.11.1 · 20 个内置工具 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置全管理） · 241 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 

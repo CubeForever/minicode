@@ -16,7 +16,7 @@
   --border2: #3a362f;
   --text: #e9e5dd;
   --dim: #97907f;
-  --faint: #6b6558;
+  --faint: #8a8375;   /* 对比度 ≥4.5:1（小号元数据文本） */
   --accent: #e2683c;          /* 余烬 */
   --accent-hover: #ec7c4f;
   --accent-weak: rgba(226, 104, 60, .12);
@@ -38,8 +38,8 @@ html[data-theme="light"] {
   --border: #e6e2d7;
   --border2: #d5d0c2;
   --text: #23201b;
-  --dim: #847e6f;
-  --faint: #a8a294;
+  --dim: #645e51;
+  --faint: #7a7466;   /* 对比度 ≥4.5:1（小号元数据文本） */
   --accent: #c14e1f;
   --accent-hover: #a8431a;
   --accent-weak: rgba(193, 78, 31, .10);
@@ -293,12 +293,13 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
   cursor: pointer;
   color: var(--text);
   font-size: 14px;
-  transition: color .15s ease, padding .2s ease;
+  transition: color .15s ease;
 }
 .chip .idx { color: var(--faint); font-size: 12px; transition: color .15s ease; }
-.chip .t { flex: 1; }
+.chip .t { flex: 1; transition: transform .2s ease; }
 .chip .arr { color: var(--faint); opacity: 0; transform: translateX(-6px); transition: all .2s ease; }
-.chip:hover { color: var(--accent); padding-left: 12px; }
+.chip:hover { color: var(--accent); }
+.chip:hover .t { transform: translateX(6px); }   /* 位移用 transform，不触发 reflow */
 .chip:hover .idx { color: var(--accent); }
 .chip:hover .arr { opacity: 1; transform: none; color: var(--accent); }
 
@@ -378,9 +379,12 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
   font-size: 12.5px;
 }
 .md table {
+  display: block;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 12px 0;
   width: 100%;
+  max-width: 100%;
   font-size: 13.5px;
 }
 .md th, .md td {
@@ -1007,4 +1011,51 @@ textarea::placeholder { color: var(--faint); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------------- 触控与可访问性回退（ui-ux-pro-max 审计修复） ---------------- */
+/* 密钥可见性切换 */
+.key-wrap { display: flex; gap: 6px; align-items: center; }
+.key-wrap input { flex: 1; }
+.key-toggle {
+  background: none;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 7px;
+  display: inline-flex;
+  flex-shrink: 0;
+  transition: color .15s ease, border-color .15s ease;
+}
+.key-toggle svg { width: 15px; height: 15px; }
+.key-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 设置按钮内联图标 */
+.side-settings { display: inline-flex; align-items: center; gap: 5px; }
+.side-settings svg { width: 12px; height: 12px; }
+.ws-current .arr { width: 13px; height: 13px; flex-shrink: 0; }
+
+/* 减少点击延迟 */
+button, textarea, select, input { touch-action: manipulation; }
+
+/* 触屏：悬停专属交互必须有常显回退 */
+@media (hover: none) {
+  .sess-row .sess { padding-right: 62px; }
+  .sess-row .sess-acts { display: inline-flex; background: none; }
+}
+
+/* 触控目标 ≥40px（图标按钮扩展热区） */
+@media (pointer: coarse) {
+  .iconbtn { min-width: 40px; min-height: 40px; }
+  .side-settings { padding: 7px 12px; }
+  .sess-acts button { padding: 9px 10px; }
+  .btn, .newchat, .ws-current { min-height: 40px; }
+  .send { width: 40px; height: 40px; }
+  .sess { padding-top: 9px; padding-bottom: 9px; }
+}
+
+/* 移动端输入 16px：避免 iOS Safari 聚焦自动放大 */
+@media (max-width: 640px) {
+  #input { font-size: 16px; }
 }

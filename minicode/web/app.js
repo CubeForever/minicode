@@ -606,6 +606,7 @@ async function refreshSessions() {
       const b = el("button", "sess",
         `<span class="sess-title">${esc(s.title)}</span>` +
         `<span class="sess-time mono">${esc(s.time)}</span>`);
+      b.title = `${s.title}（${s.time}）`;
       b.addEventListener("click", () => openSession(s.name, archived));
       const acts = el("span", "sess-acts");
       if (!archived) {
@@ -720,10 +721,36 @@ async function openSettings() {
   } catch (e) { /* 静默 */ }
 }
 $("#btnSettings").addEventListener("click", openSettings);
+/* 弹窗：点击遮罩 / ✕ / Esc 关闭，并返还焦点到输入框 */
 document.querySelectorAll(".modal").forEach(m => {
   m.addEventListener("click", e => {
-    if (e.target === m || e.target.closest("[data-close]")) m.hidden = true;
+    if (e.target === m || e.target.closest("[data-close]")) {
+      m.hidden = true;
+      input.focus();
+    }
   });
+});
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  let closed = false;
+  document.querySelectorAll(".modal:not([hidden])").forEach(m => {
+    m.hidden = true;
+    closed = true;
+  });
+  if (document.body.classList.contains("side-open")) {
+    document.body.classList.remove("side-open");
+    closed = true;
+  }
+  hideCmdHint();
+  if (closed) input.focus();
+});
+/* API Key 显示 / 隐藏 */
+$("#cfgKeyToggle").addEventListener("click", () => {
+  const key = $("#cfgKey");
+  const show = key.type === "password";
+  key.type = show ? "text" : "password";
+  $("#eyeOpen").hidden = show;
+  $("#eyeClosed").hidden = !show;
 });
 $("#btnSaveCfg").addEventListener("click", async () => {
   const body = {

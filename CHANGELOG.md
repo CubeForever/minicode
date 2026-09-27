@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.11.1 (2026-09-27)
+
+按 ui-ux-pro-max 设计规则库对 Web 界面做无障碍与触控审计修复（优先级 CRITICAL→MEDIUM 全覆盖）：
+
+可访问性（CRITICAL）：
+- 弹窗支持 Escape 关闭并返还焦点到输入框（modal-escape / focus-management）
+- 全部图标按钮补 aria-label（aria-labels）；#chat 加 role="log" aria-live="polite"，新消息对读屏器可感知
+- `--faint` 色提亮：暗色 #6b6558→#8a8375、浅色 #a8a294→#7a7466，小号元数据文本对比度达 ≥4.5:1（此前约 2.6–3.4:1）
+
+触控（CRITICAL）：
+- 触屏设备（hover: none）下会话重命名/归档/删除按钮常显，不再依赖悬停（hover-vs-tap）
+- 触控目标扩展至 ≥40px（图标按钮/会话操作/主按钮，touch-target-size）；全局 touch-action: manipulation
+
+表单与细节（MEDIUM）：
+- API Key 输入框增加显示/隐藏切换（password-toggle）
+- ⚙/⇅ emoji 图标换成内联线条 SVG（no-emoji-icons）；会话行截断补完整 title 提示
+- Markdown 表格加横向滚动容器（窄屏不破版）；移动端输入框 16px 防 iOS 聚焦自动放大
+- 任务列表悬停位移从 padding 动画改为 transform（transform-performance，不触发 reflow）
+
 ## 0.11.0 (2026-09-27)
 
 Web 界面产品化——会话管理、多工作区、模型 API 配置、终端功能全量平移（浏览器双主题验证）：

@@ -20,27 +20,30 @@
   </button>
   <div class="side-section ws-section">
     <div class="side-label mono">工作区</div>
-    <button class="ws-current" id="wsCurrent" title="切换 / 管理工作区">
+    <button class="ws-current" id="wsCurrent" title="切换 / 管理工作区" aria-label="切换或管理工作区">
       <span class="ws-path mono" id="wsPath">…</span>
-      <span class="arr">⇅</span>
+      <svg class="arr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 15 12 20 17 15"/><polyline points="7 9 12 4 17 9"/></svg>
     </button>
   </div>
   <div class="side-section">
     <div class="side-label mono">历史会话</div>
-    <div class="session-list" id="sessions">
+    <div class="session-list" id="sessions" role="list">
       <div class="side-empty">暂无历史会话</div>
     </div>
   </div>
   <div class="side-foot">
     <span class="mono">本地运行 · 零依赖</span>
-    <button id="btnSettings" class="side-settings mono" title="模型 API 配置">⚙ 设置</button>
+    <button id="btnSettings" class="side-settings" title="模型 API 配置" aria-label="打开模型设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      设置
+    </button>
   </div>
 </aside>
 <div class="side-mask" id="sideMask"></div>
 
 <div class="stage">
   <header class="topbar">
-    <button class="iconbtn menu" id="btnMenu" title="会话列表">
+    <button class="iconbtn menu" id="btnMenu" title="会话列表" aria-label="打开会话列表">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
     <span id="model" class="model-badge mono" title="当前模型">…</span>
@@ -49,18 +52,18 @@
         <div class="ctxbar"><div id="ctxFill" class="ctxfill"></div></div>
         <span id="ctxText" class="small dim mono">…</span>
       </div>
-      <button id="btnTheme" class="iconbtn" title="切换明暗主题">
+      <button id="btnTheme" class="iconbtn" title="切换明暗主题" aria-label="切换明暗主题">
         <svg id="icoMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg id="icoSun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       </button>
-      <button id="btnCompact" class="iconbtn" title="压缩上下文">
+      <button id="btnCompact" class="iconbtn" title="压缩上下文" aria-label="压缩上下文">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/></svg>
       </button>
     </div>
   </header>
 
   <main id="scroller">
-    <div id="chat">
+    <div id="chat" role="log" aria-live="polite" aria-label="对话消息">
       <div id="hero">
         <div class="eyebrow mono">minicode — terminal coding agent</div>
         <h1 class="hero-title">把任务，交给<em>终端</em>。</h1>
@@ -84,7 +87,7 @@
     <div class="cmdhint" id="cmdHint" hidden></div>
     <div class="input-card">
       <textarea id="input" rows="1" placeholder="输入任务、/命令 或 !命令…"></textarea>
-      <button id="btnSend" class="send" title="发送">↑</button>
+      <button id="btnSend" class="send" title="发送" aria-label="发送">↑</button>
     </div>
   </footer>
 
@@ -103,7 +106,7 @@
 <!-- 模型 API 设置 -->
 <div class="modal" id="settingsModal" hidden>
   <div class="modal-card">
-    <div class="modal-head"><b>模型 API</b><button class="iconbtn" data-close>✕</button></div>
+    <div class="modal-head"><b>模型 API</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="form">
       <label>提供方
         <select id="cfgProvider">
@@ -112,7 +115,15 @@
         </select>
       </label>
       <label>Base URL <input id="cfgBase" class="mono" placeholder="https://api.openai.com/v1"></label>
-      <label>API Key <input id="cfgKey" class="mono" type="password" placeholder="留空则不修改"></label>
+      <label>API Key
+        <span class="key-wrap">
+          <input id="cfgKey" class="mono" type="password" placeholder="留空则不修改" autocomplete="off">
+          <button type="button" class="key-toggle" id="cfgKeyToggle" aria-label="显示或隐藏密钥" title="显示 / 隐藏">
+            <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </span>
+      </label>
       <label>模型 <input id="cfgModel" class="mono" placeholder="glm-4.6 / claude-sonnet-4-5"></label>
       <div class="form-2col">
         <label>max_tokens <input id="cfgMax" type="number" min="256"></label>
@@ -140,7 +151,7 @@
 <!-- 工作区管理 -->
 <div class="modal" id="wsModal" hidden>
   <div class="modal-card">
-    <div class="modal-head"><b>工作区</b><button class="iconbtn" data-close>✕</button></div>
+    <div class="modal-head"><b>工作区</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="form">
       <p class="dim small">智能体的读写被锁定在当前工作区内；切换工作区会开始新会话。</p>
       <div class="ws-list" id="wsList"></div>
@@ -155,7 +166,7 @@
 <!-- 通用列表（回退选择等） -->
 <div class="modal" id="listModal" hidden>
   <div class="modal-card">
-    <div class="modal-head"><b id="listTitle">选择</b><button class="iconbtn" data-close>✕</button></div>
+    <div class="modal-head"><b id="listTitle">选择</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="modal-hint dim small" id="listHint"></div>
     <div class="pick-list" id="pickList"></div>
   </div>
