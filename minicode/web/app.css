@@ -1150,3 +1150,54 @@ button, textarea, select, input { touch-action: manipulation; }
 .btn.small { padding: 4px 12px; font-size: 12px; }
 .btn.danger:hover { border-color: var(--err); color: var(--err); }
 textarea.mono { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+
+/* ---------------- 扩展面板页签 ---------------- */
+.ext-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.ext-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font-size: 13px;
+  font-family: var(--mono);
+  padding: 8px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s ease, border-color .15s ease;
+}
+.ext-tab:hover { color: var(--text); }
+.ext-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.ext-tab .cnt {
+  background: var(--panel2);
+  border-radius: 99px;
+  padding: 0 7px;
+  font-size: 11px;
+  margin-left: 2px;
+}
+.ext-tab.active .cnt { color: var(--accent); background: var(--accent-weak); }
+.ext-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+.ext-toolbar svg { width: 14px; height: 14px; color: var(--faint); flex-shrink: 0; }
+.ext-toolbar input {
+  flex: 1;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 12px;
+  font-size: 13px;
+  font-family: var(--mono);
+  outline: none;
+}
+.ext-toolbar input:focus { border-color: var(--accent); }
+.ext-body { padding: 12px 16px 16px; min-height: 180px; }

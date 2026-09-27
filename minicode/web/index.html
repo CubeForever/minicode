@@ -158,10 +158,15 @@
   </div>
 </div>
 
-<!-- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP -->
+<!-- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP（分页签管理） -->
 <div class="modal" id="extModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b>扩展</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
+    <div class="ext-tabs mono" id="extTabs"></div>
+    <div class="ext-toolbar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="extSearch" placeholder="筛选当前扩展…" spellcheck="false">
+    </div>
     <div class="ext-body" id="extBody">
       <div class="side-empty">加载中…</div>
     </div>

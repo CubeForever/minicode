@@ -738,117 +738,177 @@ async function openSettings() {
 $("#btnSettings").addEventListener("click", openSettings);
 $("#model").addEventListener("click", openSettings);
 
-/* ---------------- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP ---------------- */
+/* ---------------- 扩展面板：分页签管理（技能/插件/子智能体/命令/MCP） ---------------- */
+const EXT_TABS = [
+  { id: "skills", label: "技能" },
+  { id: "plugins", label: "插件" },
+  { id: "agents", label: "子智能体" },
+  { id: "commands", label: "命令" },
+  { id: "mcp", label: "MCP" },
+];
+const EXT_SECTION_OPTS = {
+  skills: {
+    label: "技能（skill 工具按需加载）",
+    empty: "没有可用技能——点击 + 新建，或导入一个含 SKILL.md 的文件夹",
+    use: true, addType: "skill", delKind: "skill",
+    importCfg: { kind: "skill", pick: { kind: "folder", title: "选择技能文件夹（含 SKILL.md）" } },
+  },
+  plugins: {
+    label: "插件工具（.minicode/tools/*.py）",
+    empty: "没有插件——点击 + 新建，或导入 .py 文件",
+    addType: "plugin", delKind: "plugin", reload: true,
+    importCfg: { kind: "plugin", pick: { kind: "file", multi: true, ext: [".py"], title: "选择插件文件" } },
+  },
+  agents: {
+    label: "自定义子智能体（.minicode/agents/*.md）",
+    empty: "没有自定义子智能体",
+    addType: "agent", delKind: "agent",
+    importCfg: { kind: "agent", pick: { kind: "file", multi: true, ext: [".md"], title: "选择子智能体文件" } },
+  },
+  commands: {
+    label: "自定义命令（.minicode/commands/*.md）",
+    empty: "没有自定义命令",
+    run: true, addType: "command", delKind: "command",
+    importCfg: { kind: "command", pick: { kind: "file", multi: true, ext: [".md"], title: "选择命令文件" } },
+  },
+  mcp: {
+    label: "MCP 服务器（.minicode.json 的 mcpServers）",
+    empty: "未配置 MCP 服务器",
+  },
+};
+let extData = null, extTab = "skills", extQuery = "";
+
+function extRows(tab) {
+  const d = extData || {};
+  if (tab === "skills")
+    return (d.skills || []).map(s => ({ name: s.name, desc: s.desc,
+      source: s.source, deletable: s.source !== "内置" }));
+  if (tab === "plugins")
+    return (d.plugins || []).map(n => ({ name: n, desc: "本地 Python 插件工具" }));
+  if (tab === "agents")
+    return (d.agents || []).map(a => ({ name: a.name,
+      desc: a.desc + (a.tools ? ` · tools: ${a.tools}` : "") + (a.model ? ` · model: ${a.model}` : "") }));
+  if (tab === "commands")
+    return (d.commands || []).map(c => ({ name: c.name, desc: c.desc }));
+  return (d.mcp || []).map(m => ({ name: m.server,
+    desc: `${m.status} · ${m.tools} tools${m.error ? " · " + m.error : ""}` }));
+}
+
 $("#btnExt").addEventListener("click", openExtensions);
+$("#extSearch").addEventListener("input", e => {
+  extQuery = e.target.value.trim().toLowerCase();
+  renderExtTab();
+});
 
 async function openExtensions() {
   $("#extModal").hidden = false;
   $("#extBody").innerHTML = `<div class="side-empty">加载中…</div>`;
   try {
-    const d = await fetch("/api/extensions",
+    extData = await fetch("/api/extensions",
       { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
-    const box = $("#extBody");
-    box.innerHTML = "";
-    const section = (title, rows, empty, opts = {}) => {
-      const sec = el("div", "ext-sec");
-      const head = el("div", "ext-sec-head");
-      head.appendChild(el("div", "side-label mono", title));
-      if (opts.addType) {
-        const add = el("button", "btn ghost small", "+ 新建");
-        add.addEventListener("click", () => openExtForm(opts.addType));
-        head.appendChild(add);
-      }
-      if (opts.reload) {
-        const rl = el("button", "btn ghost small", "重载");
-        rl.addEventListener("click", async () => {
-          await api("/api/ext/reload");
-          openExtensions();
-        });
-        head.appendChild(rl);
-      }
-      if (opts.importCfg) {
-        const imp = el("button", "btn ghost small", "导入");
-        imp.addEventListener("click", async () => {
-          const pick = await api("/api/fs/pick", opts.importCfg.pick);
-          if (pick.error) { sysLine("error", pick.error); return; }
-          const paths = pick.paths || (pick.path ? [pick.path] : []);
-          if (!paths.length) return;   // 用户取消
-          const res = await api("/api/ext/import",
-            { kind: opts.importCfg.kind, paths });
-          if (res.imported && res.imported.length)
-            sysLine("info", "已导入：" + res.imported.join("、"));
-          if (res.skipped && res.skipped.length)
-            sysLine("warn", "跳过 " + res.skipped.length + " 个同名扩展");
-          res.failed && res.failed.forEach(f => sysLine("error", f.error));
-          openExtensions();
-        });
-        head.appendChild(imp);
-      }
-      sec.appendChild(head);
-      if (!rows.length) { sec.appendChild(el("div", "side-empty", empty)); box.appendChild(sec); return; }
-      for (const r of rows) {
-        const line = el("div", "ext-item");
-        line.innerHTML = `<span class="ext-name mono">${esc(r.name)}</span>` +
-          (r.source ? `<span class="ext-src">${esc(r.source)}</span>` : "") +
-          `<span class="ext-desc">${esc(r.desc || r.status || "")}</span>` +
-          (opts.use ? `<button class="btn ghost small" data-use="${esc(r.name)}">使用</button>` : "") +
-          (opts.run ? `<button class="btn ghost small" data-run="${esc(r.name)}">运行</button>` : "") +
-          (r.deletable ? `<button class="btn ghost small danger" data-del="${esc(r.name)}" title="删除">✕</button>` : "");
-        if (opts.use) {
-          line.querySelector("[data-use]").addEventListener("click", () => {
-            $("#extModal").hidden = true;
-            api("/api/turn", { prompt: `请加载 ${r.name} 技能并按其流程协助我处理任务。` });
-          });
-        }
-        if (opts.run) {
-          line.querySelector("[data-run]").addEventListener("click", () => {
-            $("#extModal").hidden = true;
-            input.value = "/" + r.name;
-            autosize();
-            send();
-          });
-        }
-        if (r.deletable) {
-          line.querySelector("[data-del]").addEventListener("click", () => {
-            if (!confirm(`删除「${r.name}」？此操作不可恢复。`)) return;
-            api("/api/ext/" + opts.delKind + "/delete",
-                { name: r.name, source: r.source })
-              .then(() => openExtensions())
-              .catch(() => {});
-          });
-        }
-        sec.appendChild(line);
-      }
-      box.appendChild(sec);
-    };
-    section("技能（skill 工具按需加载）",
-      d.skills.map(s => ({ name: s.name, desc: s.desc, source: s.source,
-                           deletable: s.source !== "内置" })),
-      "没有可用技能——点击 + 新建，或导入一个含 SKILL.md 的文件夹",
-      { use: true, addType: "skill", delKind: "skill",
-        importCfg: { kind: "skill", pick: { kind: "folder", title: "选择技能文件夹（含 SKILL.md）" } } });
-    section("插件工具（.minicode/tools/*.py）",
-      d.plugins.map(n => ({ name: n, desc: "本地 Python 插件工具" })),
-      "没有插件——点击 + 新建，或导入 .py 文件",
-      { addType: "plugin", delKind: "plugin", reload: true,
-        importCfg: { kind: "plugin", pick: { kind: "file", multi: true, ext: [".py"], title: "选择插件文件" } } });
-    section("自定义子智能体（.minicode/agents/*.md）",
-      d.agents.map(a => ({ name: a.name, desc: a.desc + (a.tools ? ` · tools: ${a.tools}` : "") + (a.model ? ` · model: ${a.model}` : "") })),
-      "没有自定义子智能体",
-      { addType: "agent", delKind: "agent",
-        importCfg: { kind: "agent", pick: { kind: "file", multi: true, ext: [".md"], title: "选择子智能体文件" } } });
-    section("自定义命令（.minicode/commands/*.md）",
-      d.commands.map(c => ({ name: c.name, desc: c.desc })),
-      "没有自定义命令",
-      { run: true, addType: "command", delKind: "command",
-        importCfg: { kind: "command", pick: { kind: "file", multi: true, ext: [".md"], title: "选择命令文件" } } });
-    section("MCP 服务器（.minicode.json 的 mcpServers）",
-      d.mcp.map(m => ({ name: m.server, desc: `${m.status} · ${m.tools} tools${m.error ? " · " + m.error : ""}` })),
-      "未配置 MCP 服务器");
+    renderExtTabs();
+    renderExtTab();
   } catch (e) {
     $("#extBody").innerHTML = `<div class="side-empty">加载失败</div>`;
   }
 }
+
+function renderExtTabs() {
+  const box = $("#extTabs");
+  box.innerHTML = "";
+  for (const t of EXT_TABS) {
+    const count = extRows(t.id).length;
+    const b = el("button", "ext-tab" + (t.id === extTab ? " active" : ""),
+      `${t.label}${count ? ` <span class="cnt">${count}</span>` : ""}`);
+    b.addEventListener("click", () => { extTab = t.id; renderExtTabs(); renderExtTab(); });
+    box.appendChild(b);
+  }
+}
+
+function renderExtTab() {
+  const opts = EXT_SECTION_OPTS[extTab] || { label: extTab, empty: "" };
+  const all = extRows(extTab);
+  const rows = all.filter(r => !extQuery ||
+    (r.name + " " + r.desc).toLowerCase().includes(extQuery.toLowerCase()));
+  const box = $("#extBody");
+  box.innerHTML = "";
+  const sec = el("div", "ext-sec");
+  const head = el("div", "ext-sec-head");
+  head.appendChild(el("div", "side-label mono", opts.label || extTab));
+  if (opts.addType) {
+    const add = el("button", "btn ghost small", "+ 新建");
+    add.addEventListener("click", () => openExtForm(opts.addType));
+    head.appendChild(add);
+  }
+  if (opts.importCfg) {
+    const imp = el("button", "btn ghost small", "导入");
+    imp.addEventListener("click", async () => {
+      const pick = await api("/api/fs/pick", opts.importCfg.pick);
+      if (pick.error) { sysLine("error", pick.error); return; }
+      const paths = pick.paths || (pick.path ? [pick.path] : []);
+      if (!paths.length) return;   // 用户取消
+      const res = await api("/api/ext/import",
+        { kind: opts.importCfg.kind, paths });
+      if (res.imported && res.imported.length)
+        sysLine("info", "已导入：" + res.imported.join("、"));
+      if (res.skipped && res.skipped.length)
+        sysLine("warn", "跳过 " + res.skipped.length + " 个同名扩展");
+      res.failed && res.failed.forEach(f => sysLine("error", f.error));
+      openExtensions();
+    });
+    head.appendChild(imp);
+  }
+  if (opts.reload) {
+    const rl = el("button", "btn ghost small", "重载");
+    rl.addEventListener("click", async () => {
+      await api("/api/ext/reload");
+      openExtensions();
+    });
+    head.appendChild(rl);
+  }
+  sec.appendChild(head);
+  if (!rows.length) {
+    sec.appendChild(el("div", "side-empty",
+      extQuery ? "没有匹配的扩展" : opts.empty));
+    box.appendChild(sec);
+    return;
+  }
+  for (const r of rows) {
+    const line = el("div", "ext-item");
+    line.innerHTML = `<span class="ext-name mono">${esc(r.name)}</span>` +
+      (r.source ? `<span class="ext-src">${esc(r.source)}</span>` : "") +
+      `<span class="ext-desc">${esc(r.desc || r.status || "")}</span>` +
+      (opts.use ? `<button class="btn ghost small" data-use="${esc(r.name)}">使用</button>` : "") +
+      (opts.run ? `<button class="btn ghost small" data-run="${esc(r.name)}">运行</button>` : "") +
+      (r.deletable ? `<button class="btn ghost small danger" data-del="${esc(r.name)}" title="删除">✕</button>` : "");
+    if (opts.use) {
+      line.querySelector("[data-use]").addEventListener("click", () => {
+        $("#extModal").hidden = true;
+        api("/api/turn", { prompt: `请加载 ${r.name} 技能并按其流程协助我处理任务。` });
+      });
+    }
+    if (opts.run) {
+      line.querySelector("[data-run]").addEventListener("click", () => {
+        $("#extModal").hidden = true;
+        input.value = "/" + r.name;
+        autosize();
+        send();
+      });
+    }
+    if (r.deletable) {
+      line.querySelector("[data-del]").addEventListener("click", () => {
+        if (!confirm(`删除「${r.name}」？此操作不可恢复。`)) return;
+        api("/api/ext/" + opts.delKind + "/delete",
+            { name: r.name, source: r.source })
+          .then(() => openExtensions())
+          .catch(() => {});
+      });
+    }
+    sec.appendChild(line);
+  }
+  box.appendChild(sec);
+}
+
 /* 弹窗：点击遮罩 / ✕ / Esc 关闭，并返还焦点到输入框 */
 document.querySelectorAll(".modal").forEach(m => {
   m.addEventListener("click", e => {
