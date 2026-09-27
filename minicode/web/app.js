@@ -874,13 +874,18 @@ function renderExtTab() {
     return;
   }
   for (const r of rows) {
-    const line = el("div", "ext-item");
+    const line = el("div", "ext-item clickable");
+    line.title = "点击查看详情";
     line.innerHTML = `<span class="ext-name mono">${esc(r.name)}</span>` +
       (r.source ? `<span class="ext-src">${esc(r.source)}</span>` : "") +
       `<span class="ext-desc">${esc(r.desc || r.status || "")}</span>` +
       (opts.use ? `<button class="btn ghost small" data-use="${esc(r.name)}">使用</button>` : "") +
       (opts.run ? `<button class="btn ghost small" data-run="${esc(r.name)}">运行</button>` : "") +
       (r.deletable ? `<button class="btn ghost small danger" data-del="${esc(r.name)}" title="删除">✕</button>` : "");
+    line.addEventListener("click", e => {
+      if (e.target.closest("button")) return;   // 操作按钮不触发详情
+      openExtDetail(extTab, r.name);
+    });
     if (opts.use) {
       line.querySelector("[data-use]").addEventListener("click", () => {
         $("#extModal").hidden = true;
@@ -1188,3 +1193,50 @@ chat.addEventListener("click", e => {
   setInterval(refreshStatus, 2500);
   input.focus();
 })();
+
+/* ---------------- 扩展详情弹窗 ---------------- */
+async function openExtDetail(tab, name) {
+  $("#detailModal").hidden = false;
+  $("#detailBody").innerHTML = `<div class="side-empty">加载中…</div>`;
+  try {
+    const d = await fetch(
+      `/api/ext/detail?type=${encodeURIComponent(tab)}&name=${encodeURIComponent(name)}`,
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    if (d.error) { $("#detailBody").innerHTML = `<div class="side-empty">${esc(d.error)}</div>`; return; }
+    const body = $("#detailBody");
+    body.innerHTML = "";
+    // 元信息
+    const meta = el("div", "detail-meta");
+    const rows = [["类型", tab], ["名称", d.name]];
+    if (d.source) rows.push(["来源", d.source]);
+    if (d.desc) rows.push(["描述", d.desc]);
+    if (d.tools) rows.push(["可用工具", d.tools]);
+    if (d.model) rows.push(["模型", d.model]);
+    if (d.status) rows.push(["状态", d.status + (d.error ? " · " + d.error : "")]);
+    if (d.path) rows.push(["位置", d.path]);
+    for (const [k, v] of rows) {
+      meta.appendChild(el("div", "meta-row",
+        `<span class="meta-k mono">${esc(k)}</span><span class="meta-v">${esc(v)}</span>`));
+    }
+    body.appendChild(meta);
+    // MCP：工具清单
+    if (d.tools && Array.isArray(d.tools)) {
+      for (const t of d.tools) {
+        const item = el("div", "ext-item",
+          `<span class="ext-name mono">${esc(t.name)}</span>` +
+          `<span class="ext-desc">${esc(t.desc)}</span>`);
+        body.appendChild(item);
+      }
+      if (!d.tools.length) body.appendChild(el("div", "side-empty", "该服务器没有提供工具"));
+      return;
+    }
+    // 全文内容
+    if (d.content) {
+      body.appendChild(el("div", "side-label mono", "全文"));
+      const pre = el("pre", "detail-pre", esc(d.content));
+      body.appendChild(pre);
+    }
+  } catch (e) {
+    $("#detailBody").innerHTML = `<div class="side-empty">加载失败</div>`;
+  }
+}

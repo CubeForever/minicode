@@ -285,6 +285,9 @@ class WebUIServer:
                     return self._json(200, outer._extensions())
                 if path == "/api/fs/list":
                     return self._json(200, outer._fs_list(query.get("path", [""])[0]))
+                if path == "/api/ext/detail":
+                    return self._json(*outer._ext_detail(
+                        query.get("type", [""])[0], query.get("name", [""])[0]))
                 return self._json(404, {"error": "not found"})
 
             def _static(self, fname: str, ctype: str):
@@ -1150,6 +1153,83 @@ class WebUIServer:
             self._rebuild(new_session=False)   # 让新扩展立即可用
         return 200, {"ok": True, "imported": imported,
                      "skipped": skipped, "failed": failed}
+
+    def _ext_detail(self, kind: str, name: str):
+        """扩展详情：技能/命令/子智能体的全文，插件的源码，MCP 的工具清单。"""
+        kind = (kind or "").strip()
+        name = (name or "").strip()
+        if not name or len(name) > 120 or "/" in name or "\\" in name:
+            return 400, {"error": "invalid name"}
+
+        def _frontmatter(text: str) -> tuple:
+            """解析 --- frontmatter 中的简单键值对，返回 (meta, body)。"""
+            meta, body = {}, text
+            if text.startswith("---"):
+                parts = text.split("---", 2)
+                if len(parts) == 3:
+                    for ln in parts[1].splitlines():
+                        if ":" in ln:
+                            k, _, v = ln.partition(":")
+                            meta[k.strip().lower()] = v.strip()
+                    body = parts[2]
+            return meta, body
+
+        if kind == "skills":
+            from .tools.skills import _parse, _skill_dirs
+            for label, d in zip(["内置", "用户", "项目"], _skill_dirs(self.cfg.cwd)):
+                f = d / name / "SKILL.md"
+                if not f.exists():
+                    continue
+                n, desc, body = _parse(f)
+                return 200, {"kind": kind, "name": n, "desc": desc,
+                             "source": label, "path": str(f), "content": body}
+            return 404, {"error": f"技能 {name} 不存在"}
+        if kind == "plugins":
+            for base in (self.cfg.cwd / ".minicode" / "tools",
+                         Path.home() / ".minicode" / "tools"):
+                f = base / f"{name}.py"
+                if f.exists():
+                    return 200, {"kind": kind, "name": name,
+                                 "desc": "本地 Python 插件工具",
+                                 "path": str(f),
+                                 "content": f.read_text(encoding="utf-8",
+                                                        errors="replace")}
+            return 404, {"error": f"插件 {name} 不存在"}
+        if kind == "agents":
+            base = self.cfg.cwd / ".minicode" / "agents"
+            f = base / f"{name}.md"
+            if not f.exists():
+                return 404, {"error": f"子智能体 {name} 不存在"}
+            meta, body = _frontmatter(f.read_text(encoding="utf-8",
+                                                  errors="replace"))
+            return 200, {"kind": kind, "name": name,
+                         "desc": meta.get("description", ""),
+                         "tools": meta.get("tools", ""),
+                         "model": meta.get("model", ""),
+                         "path": str(f), "content": body.strip()}
+        if kind == "commands":
+            base = self.cfg.cwd / ".minicode" / "commands"
+            f = base / f"{name}.md"
+            if not f.exists():
+                return 404, {"error": f"命令 {name} 不存在"}
+            meta, body = _frontmatter(f.read_text(encoding="utf-8",
+                                                  errors="replace"))
+            return 200, {"kind": kind, "name": name,
+                         "desc": meta.get("description", ""),
+                         "path": str(f), "content": body.strip()}
+        if kind == "mcp":
+            client = (self.agent.mcp.clients.get(name)
+                      if (self.agent.mcp is not None) else None)
+            if client is None:
+                return 404, {"error": f"MCP 服务器 {name} 不存在"}
+            tools = [{"name": t.get("name", ""),
+                      "desc": (t.get("description") or "")[:300],
+                      "schema": json.dumps(t.get("inputSchema") or {},
+                                           ensure_ascii=False)[:1200]}
+                     for t in client.tools if isinstance(t, dict)]
+            return 200, {"kind": "mcp", "name": name, "status": client.status,
+                         "error": client.error or "", "tools": tools}
+        return 400, {"error": f"unknown type: {kind}"}
 
     def _extensions(self) -> dict:
         """扩展体系全目录：技能 / 插件 / 自定义子智能体 / 自定义命令 / MCP。"""

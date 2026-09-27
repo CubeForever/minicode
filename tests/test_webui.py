@@ -613,3 +613,54 @@ def test_webui_ext_import(tmp_path, monkeypatch):
         assert ei2.value.code == 400
         # 重载端点
         assert json.load(post(base, "/api/ext/reload", {}, token=srv.token))["ok"]
+
+
+# ---------- 扩展详情 ----------
+
+def test_webui_ext_detail(tmp_path, monkeypatch):
+    ext_dir = tmp_path / "ext"
+    (ext_dir / ".minicode" / "skills" / "review-flow").mkdir(parents=True)
+    (ext_dir / ".minicode" / "skills" / "review-flow" / "SKILL.md").write_text(
+        "---\nname: review-flow\ndescription: 审查流程\n---\n第一步：跑测试。",
+        encoding="utf-8")
+    (ext_dir / ".minicode" / "agents").mkdir(parents=True)
+    (ext_dir / ".minicode" / "agents" / "scout.md").write_text(
+        "---\ndescription: 侦察兵\ntools: read_file,grep\nmodel: glm-4.6\n"
+        "---\n只调研不修改。", encoding="utf-8")
+    (ext_dir / ".minicode" / "commands").mkdir(parents=True)
+    (ext_dir / ".minicode" / "commands" / "refactor.md").write_text(
+        "---\ndescription: 重构命令\n---\n重构 $ARGUMENTS", encoding="utf-8")
+    (ext_dir / ".minicode" / "tools").mkdir(parents=True)
+    (ext_dir / ".minicode" / "tools" / "hello.py").write_text(
+        'TOOL = {"name": "hello"}\ndef run(args, ctx):\n    return "hi"',
+        encoding="utf-8")
+    monkeypatch.chdir(ext_dir)
+
+    srv = make_server(ext_dir, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        # 技能全文
+        d = json.load(get(base, "/api/ext/detail?type=skills&name=review-flow",
+                          token=srv.token))
+        assert d["source"] == "项目" and "第一步" in d["content"]
+        assert d["desc"] == "审查流程"
+        # 子智能体元信息
+        d = json.load(get(base, "/api/ext/detail?type=agents&name=scout",
+                          token=srv.token))
+        assert d["tools"] == "read_file,grep" and d["model"] == "glm-4.6"
+        # 命令内容
+        d = json.load(get(base, "/api/ext/detail?type=commands&name=refactor",
+                          token=srv.token))
+        assert "$ARGUMENTS" in d["content"]
+        # 插件源码
+        d = json.load(get(base, "/api/ext/detail?type=plugins&name=hello",
+                          token=srv.token))
+        assert "def run" in d["content"]
+        # MCP 不存在
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            get(base, "/api/ext/detail?type=mcp&name=ghost", token=srv.token)
+        assert ei.value.code == 404
+        # 非法类型
+        with pytest.raises(urllib.error.HTTPError) as ei2:
+            get(base, "/api/ext/detail?type=bogus&name=x", token=srv.token)
+        assert ei2.value.code == 400
