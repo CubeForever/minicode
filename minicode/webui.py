@@ -15,6 +15,7 @@ import hmac
 import json
 import re
 import secrets
+import sys
 import threading
 import time
 import uuid
@@ -279,6 +280,8 @@ class WebUIServer:
                         "context_limit": cfg.context_limit,
                         "reasoning_effort": cfg.reasoning_effort,
                         "timeout": cfg.timeout})
+                if path == "/api/extensions":
+                    return self._json(200, outer._extensions())
                 return self._json(404, {"error": "not found"})
 
             def _static(self, fname: str, ctype: str):
@@ -774,6 +777,58 @@ class WebUIServer:
                 return {"output": "自检已关闭。"}
             cfg.verify_command = arg
             return {"output": f"自检命令已设置：{arg} —— 每次文件改动后自动执行"}
+        if name == "output-style":
+            style = arg if arg in ("default", "explanatory") else (
+                "explanatory" if cfg.output_style == "default" else "default")
+            cfg.output_style = style
+            agent.system_prompt = build_system_prompt(
+                cfg, agent._prompt_cwd, agent._custom_agents)
+            return {"output": f"输出风格：{style}"}
+        if name == "doctor":
+            import shutil as _shutil
+            from .lineinput import HAS_READLINE
+            rows = [f"python      {sys.version_info.major}.{sys.version_info.minor}"
+                    f".{sys.version_info.micro}"]
+            shell_ok = bool(_shutil.which(cfg.shell_name)) if cfg.shell_name != "cmd" \
+                else bool(_shutil.which("cmd"))
+            rows.append(f"shell       {cfg.shell_name} {'✓' if shell_ok else '✗'}")
+            rows.append(f"api_key     {'已配置' if cfg.api_key else '未配置'}")
+            rows.append(f"model       {cfg.model} @ {cfg.base_url or '（默认）'}")
+            ctx_file = next((n for n in ("MINICODE.md", "AGENTS.md", "CLAUDE.md")
+                             if (cfg.cwd / n).exists()), None)
+            rows.append(f"项目记忆    {ctx_file or '未找到（/init 可生成）'}")
+            rows.append(f"tab 补全    {'可用' if HAS_READLINE else '不可用'}")
+            if agent.mcp is not None:
+                for n, c in agent.mcp.clients.items():
+                    rows.append(f"mcp:{n}     {c.status}"
+                                + (f" ({len(c.tools)} tools)" if c.status == "connected" else ""))
+            return {"output": "\n".join(rows)}
+        if name == "stats":
+            import json as _json
+            from .session import SESSIONS_DIR
+            files = list(SESSIONS_DIR.glob("*.json"))
+            total_msgs = total_tools = errors = 0
+            tool_counts = {}
+            for f in files:
+                try:
+                    d = _json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                for m in d.get("messages", []):
+                    total_msgs += 1
+                    if m.get("role") == "tool":
+                        total_tools += 1
+                        n = m.get("name") or "?"
+                        tool_counts[n] = tool_counts.get(n, 0) + 1
+                        if m.get("is_error"):
+                            errors += 1
+            rate = (errors / total_tools * 100) if total_tools else 0
+            top = sorted(tool_counts.items(), key=lambda kv: -kv[1])[:5]
+            lines = [f"会话 {len(files)} · 消息 {total_msgs} · 工具调用 {total_tools}"
+                     f" · 工具错误 {errors}（错误率 {rate:.1f}%）"]
+            if top:
+                lines.append("最常用工具：" + "、".join(f"{n}×{c}" for n, c in top))
+            return {"output": "\n".join(lines)}
         if name == "help":
             return {"output": "\n".join(
                 "/mode /undo /rewind /diff /limit /reasoning /cost /context "
@@ -792,6 +847,33 @@ class WebUIServer:
             return {"turn": custom[1].replace("$ARGUMENTS", arg)
                     .replace("{args}", arg)}
         return {"error": f"未知命令 /{name}（/help 查看可用命令）"}
+
+    def _extensions(self) -> dict:
+        """扩展体系全目录：技能 / 插件 / 自定义子智能体 / 自定义命令 / MCP。"""
+        from .cli import BUILTIN_COMMANDS, _custom_commands
+        from .plugins import PluginTool
+        from .tools.skills import skills_catalog
+        plugins = [t.name for t in self.agent.registry.tools.values()
+                   if isinstance(t, PluginTool)]
+        mcp_tools = []
+        if self.agent.mcp is not None:
+            for name, c in self.agent.mcp.clients.items():
+                mcp_tools.append({"server": name, "status": c.status,
+                                  "tools": len(c.tools),
+                                  "error": c.error or ""})
+        return {
+            "skills": [{"name": n, "desc": d, "source": src}
+                       for n, (d, src) in skills_catalog(self.cfg.cwd).items()],
+            "plugins": plugins,
+            "agents": [{"name": n, "desc": info.get("description", ""),
+                        "tools": info.get("tools", ""),
+                        "model": info.get("model", "")}
+                       for n, info in (self.agent._custom_agents or {}).items()],
+            "commands": [{"name": n, "desc": d}
+                         for n, (d, _) in _custom_commands().items()
+                         if n not in BUILTIN_COMMANDS],
+            "mcp": mcp_tools,
+        }
 
     def _emit(self, event: dict) -> None:
         self.bridge._emit(event)

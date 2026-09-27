@@ -12,6 +12,7 @@ from minicode.config import Config
 from minicode.fake import FakeProvider
 from minicode.session import Session
 from minicode.tools import build_registry
+from minicode.tools.base import ToolError
 from minicode.tools.shell import ShellState
 from minicode.ui import UI
 from minicode.webui import WebBridgeUI, WebUIServer
@@ -427,3 +428,98 @@ def test_webui_workspace_lock_denies_outside_writes(tmp_path):
     assert tool_msg["is_error"]
     assert "工作区边界" in tool_msg["content"]
     assert not (outside / "x.txt").exists()      # yolo 也被硬拒绝
+
+
+# ---------- 并行子智能体 ----------
+
+def test_dispatch_agents_runs_tasks_in_parallel(tmp_path):
+    import time as _time
+    from minicode.tools.base import ToolContext
+    from minicode.tools.subagent import DispatchAgentsTool
+    ctx = ToolContext(cwd=tmp_path, config=Config(provider="fake", api_key="",
+                                                    model="fake"),
+                      session=Session(), ui=UI())
+
+    def slow_factory(prompt, subagent_type=None):
+        _time.sleep(0.3)                      # 串行 3×0.3=0.9s；并行应 ~0.3s
+        return f"报告[{prompt}]"
+
+    ctx.agent_factory = slow_factory
+    t0 = _time.time()
+    r = DispatchAgentsTool().run(
+        {"tasks": [{"prompt": "查模块A"}, {"prompt": "查模块B"}, {"prompt": "查模块C"}]},
+        ctx)
+    elapsed = _time.time() - t0
+    assert elapsed < 0.85                     # 并行而非串行
+    assert "任务 1" in r and "报告[查模块A]" in r
+    assert "报告[查模块B]" in r and "报告[查模块C]" in r
+
+
+def test_dispatch_agents_isolates_failures_and_validates(tmp_path):
+    from minicode.tools.base import ToolContext
+    from minicode.tools.subagent import DispatchAgentsTool
+    ctx = ToolContext(cwd=tmp_path, config=Config(provider="fake", api_key="",
+                                                    model="fake"),
+                      session=Session(), ui=UI())
+
+    def flaky_factory(prompt, subagent_type=None):
+        if "炸" in prompt:
+            raise RuntimeError("boom")
+        return f"ok[{prompt}]"
+
+    ctx.agent_factory = flaky_factory
+    r = DispatchAgentsTool().run(
+        {"tasks": [{"prompt": "正常任务"}, {"prompt": "炸任务"}]}, ctx)
+    assert "ok[正常任务]" in r
+    assert "RuntimeError: boom" in r          # 单任务失败不影响其他
+    assert "任务 2" in r
+
+    tool = DispatchAgentsTool()
+    with pytest.raises(ToolError):
+        tool.run({"tasks": [{"prompt": "只有一个"}]}, ctx)   # 少于 2 个拒绝
+    with pytest.raises(ToolError):
+        tool.run({"tasks": "not-a-list"}, ctx)
+
+
+def test_dispatch_agents_registered_full_but_not_readonly(tmp_path):
+    from minicode.tools import build_registry
+    full = build_registry(ShellState(tmp_path, "bash"))
+    ro = build_registry(ShellState(tmp_path, "bash"), read_only=True)
+    assert "dispatch_agents" in full.names()
+    assert "dispatch_agents" not in ro.names()   # 子智能体不嵌套派生
+
+
+# ---------- 扩展面板接口 ----------
+
+def test_webui_extensions_endpoint(tmp_path, monkeypatch):
+    ext_dir = tmp_path / "ext"
+    (ext_dir / ".minicode" / "skills" / "review-skill").mkdir(parents=True)
+    (ext_dir / ".minicode" / "commands").mkdir(parents=True)
+    (ext_dir / ".minicode" / "agents").mkdir(parents=True)
+    (ext_dir / ".minicode" / "tools").mkdir(parents=True)
+    (ext_dir / ".minicode" / "skills" / "review-skill" / "SKILL.md").write_text(
+        "---\nname: review-skill\ndescription: 专项审查流程\n---\n按步骤审查。",
+        encoding="utf-8")
+    (ext_dir / ".minicode" / "commands" / "refactor.md").write_text(
+        "重构 $ARGUMENTS", encoding="utf-8")
+    (ext_dir / ".minicode" / "agents" / "scout.md").write_text(
+        "---\ndescription: 侦察兵\ntools: read_file,grep\n---\n只调研。",
+        encoding="utf-8")
+    (ext_dir / ".minicode" / "tools" / "hello.py").write_text(
+        'TOOL = {"name": "hello", "description": "打招呼"}\n'
+        "def run(args, ctx):\n    return 'hi'\n", encoding="utf-8")
+    monkeypatch.chdir(ext_dir)
+    # 信任门禁放行插件
+    monkeypatch.setattr("minicode.cli.sys.stdin.isatty", lambda: False)
+
+    srv = make_server(ext_dir, [], mode="default")
+    with Running(srv):
+        base = f"http://127.0.0.1:{srv.port}"
+        d = json.load(get(base, "/api/extensions", token=srv.token))
+        skill_names = [s["name"] for s in d["skills"]]
+        assert "review-skill" in skill_names          # 项目技能 + 内置技能共存
+        rs = next(s for s in d["skills"] if s["name"] == "review-skill")
+        assert rs["desc"] == "专项审查流程" and rs["source"] == "项目"
+        assert "hello" in d["plugins"]
+        assert d["agents"][0]["name"] == "scout" and d["agents"][0]["desc"] == "侦察兵"
+        assert [c["name"] for c in d["commands"]] == ["refactor"]

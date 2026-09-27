@@ -257,7 +257,8 @@ function streamText(text) {
 const TOOL_KIND = {
   read_file: "read", glob: "read", grep: "read", list_dir: "read",
   web_fetch: "read", web_search: "read", bash_output: "read", bash_kill: "read",
-  skill: "read", dispatch_agent: "read", consult_panel: "read", todo_write: "meta",
+  skill: "read", dispatch_agent: "read", dispatch_agents: "read",
+  consult_panel: "read", todo_write: "meta",
   ask_user: "meta", exit_plan: "meta",
   write_file: "write", edit_file: "write", apply_patch: "write",
   notebook_edit: "write", brain_write: "write",
@@ -583,7 +584,8 @@ async function send() {
 const COMMANDS = ["/mode", "/undo", "/rewind", "/diff", "/limit", "/reasoning",
   "/cost", "/context", "/tools", "/todos", "/brain", "/memory", "/export",
   "/transcript", "/plans", "/agents", "/skills", "/mcp", "/model", "/models",
-  "/add-dir", "/verify", "/init", "/commit", "/pr", "/review", "/help"];
+  "/add-dir", "/verify", "/init", "/commit", "/pr", "/review", "/stats",
+  "/doctor", "/output-style", "/extensions", "/help"];
 function showCmdHint() {
   const hint = $("#cmdHint");
   const v = input.value.trim();
@@ -721,6 +723,57 @@ async function openSettings() {
   } catch (e) { /* 静默 */ }
 }
 $("#btnSettings").addEventListener("click", openSettings);
+
+/* ---------------- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP ---------------- */
+$("#btnExt").addEventListener("click", async () => {
+  $("#extModal").hidden = false;
+  $("#extBody").innerHTML = `<div class="side-empty">加载中…</div>`;
+  try {
+    const d = await fetch("/api/extensions",
+      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+    const box = $("#extBody");
+    box.innerHTML = "";
+    const section = (title, rows, empty, runName) => {
+      const sec = el("div", "ext-sec");
+      sec.appendChild(el("div", "side-label mono", title));
+      if (!rows.length) { sec.appendChild(el("div", "side-empty", empty)); box.appendChild(sec); return; }
+      for (const r of rows) {
+        const line = el("div", "ext-item");
+        line.innerHTML = `<span class="ext-name mono">${esc(r.name)}</span>` +
+          (r.source ? `<span class="ext-src">${esc(r.source)}</span>` : "") +
+          `<span class="ext-desc">${esc(r.desc || r.status || "")}</span>` +
+          (runName ? `<button class="btn ghost small" data-run="${esc(r.name)}">运行</button>` : "");
+        if (runName) {
+          line.querySelector("[data-run]").addEventListener("click", () => {
+            $("#extModal").hidden = true;
+            input.value = "/" + r.name;
+            autosize();
+            send();
+          });
+        }
+        sec.appendChild(line);
+      }
+      box.appendChild(sec);
+    };
+    section("技能（skill 工具按需加载）",
+      d.skills.map(s => ({ name: s.name, desc: s.desc, source: s.source })),
+      "没有可用技能——在 .minicode/skills/<名字>/SKILL.md 放置工作流即可");
+    section("插件工具（.minicode/tools/*.py，首次加载需信任确认）",
+      d.plugins.map(n => ({ name: n, desc: "本地 Python 插件工具" })),
+      "没有已加载插件");
+    section("自定义子智能体（.minicode/agents/*.md）",
+      d.agents.map(a => ({ name: a.name, desc: a.desc + (a.tools ? ` · tools: ${a.tools}` : "") + (a.model ? ` · model: ${a.model}` : "") })),
+      "没有自定义子智能体");
+    section("自定义命令（.minicode/commands/*.md）",
+      d.commands.map(c => ({ name: c.name, desc: c.desc })),
+      "没有自定义命令", true);   // 可点击运行
+    section("MCP 服务器",
+      d.mcp.map(m => ({ name: m.server, desc: `${m.status} · ${m.tools} tools${m.error ? " · " + m.error : ""}` })),
+      "未配置 MCP 服务器");
+  } catch (e) {
+    $("#extBody").innerHTML = `<div class="side-empty">加载失败</div>`;
+  }
+});
 /* 弹窗：点击遮罩 / ✕ / Esc 关闭，并返还焦点到输入框 */
 document.querySelectorAll(".modal").forEach(m => {
   m.addEventListener("click", e => {

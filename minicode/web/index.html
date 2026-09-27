@@ -33,10 +33,16 @@
   </div>
   <div class="side-foot">
     <span class="mono">本地运行 · 零依赖</span>
-    <button id="btnSettings" class="side-settings" title="模型 API 配置" aria-label="打开模型设置">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-      设置
-    </button>
+    <span class="side-foot-btns">
+      <button id="btnExt" class="side-settings" title="技能 / 插件 / 子智能体 / MCP" aria-label="打开扩展面板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        扩展
+      </button>
+      <button id="btnSettings" class="side-settings" title="模型 API 配置" aria-label="打开模型设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        设置
+      </button>
+    </span>
   </div>
 </aside>
 <div class="side-mask" id="sideMask"></div>
@@ -144,6 +150,16 @@
     <div class="modal-foot">
       <button class="btn ghost" data-close>取消</button>
       <button id="btnSaveCfg" class="btn primary">保存并重连</button>
+    </div>
+  </div>
+</div>
+
+<!-- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP -->
+<div class="modal" id="extModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><b>扩展</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
+    <div class="ext-body" id="extBody">
+      <div class="side-empty">加载中…</div>
     </div>
   </div>
 </div>

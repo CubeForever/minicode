@@ -1059,3 +1059,32 @@ button, textarea, select, input { touch-action: manipulation; }
 @media (max-width: 640px) {
   #input { font-size: 16px; }
 }
+
+/* ---------------- 扩展面板 ---------------- */
+.ext-body { padding: 8px 16px 16px; }
+.ext-sec { margin-top: 14px; }
+.ext-sec:first-child { margin-top: 6px; }
+.ext-sec .side-label { padding: 0 0 6px; }
+.ext-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.ext-item:last-child { border-bottom: none; }
+.ext-name { color: var(--text); font-weight: 600; flex-shrink: 0; }
+.ext-src {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+.ext-desc { color: var(--dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-item .btn { flex-shrink: 0; padding: 3px 10px; font-size: 12px; }
+
+.side-foot-btns { display: inline-flex; gap: 6px; flex-shrink: 0; }

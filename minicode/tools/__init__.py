@@ -2,7 +2,7 @@ from .base import Tool, ToolContext, ToolError, ToolRegistry, truncate_middle
 from .fs import (EditFileTool, GlobTool, GrepTool, ListDirTool,
                  ReadFileTool, WriteFileTool)
 from .shell import BashTool, BashKillTool, BashOutputTool, ShellState, detect_shell
-from .subagent import DispatchAgentTool
+from .subagent import DispatchAgentTool, DispatchAgentsTool
 from .todo import TodoWriteTool
 from .webfetch import WebFetchTool
 from .websearch import WebSearchTool
@@ -33,5 +33,6 @@ def build_registry(shell_state, read_only: bool = False) -> ToolRegistry:
                   NotebookEditTool(),
                   BashTool(shell_state), BashOutputTool(shell_state),
                   BashKillTool(shell_state), TodoWriteTool(), DispatchAgentTool(),
-                  ExitPlanTool(), AskUserTool(), BrainWriteTool()]
+                  DispatchAgentsTool(), ExitPlanTool(), AskUserTool(),
+                  BrainWriteTool()]
     return ToolRegistry(tools)
