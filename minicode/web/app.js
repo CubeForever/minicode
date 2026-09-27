@@ -1230,11 +1230,15 @@ async function openExtDetail(tab, name) {
       if (!d.tools.length) body.appendChild(el("div", "side-empty", "该服务器没有提供工具"));
       return;
     }
-    // 全文内容
+    // 全文内容：Markdown 渲染为自然文章（插件源码保持代码视图）
     if (d.content) {
-      body.appendChild(el("div", "side-label mono", "全文"));
-      const pre = el("pre", "detail-pre", esc(d.content));
-      body.appendChild(pre);
+      body.appendChild(el("div", "side-label mono",
+        tab === "plugins" ? "源码" : "全文"));
+      if (tab === "plugins") {
+        body.appendChild(el("pre", "detail-pre", esc(d.content)));
+      } else {
+        body.appendChild(el("div", "md detail-md", md(d.content)));
+      }
     }
   } catch (e) {
     $("#detailBody").innerHTML = `<div class="side-empty">加载失败</div>`;
