@@ -953,9 +953,13 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                    if agent.config.reasoning_effort else ""))
     elif name == "/cost":
         t = agent.session.total_usage
-        cached = t.get("cache_read") or 0
-        extra = f" · 缓存命中 {cached:,}" if cached else ""
-        ui.plain(f"  累计 tokens：in {t['input']:,} · out {t['output']:,}{extra}"
+        cs = agent.session.cache_stats()
+        cache_txt = ""
+        if cs["cache_read"]:
+            cache_txt = f" · 缓存命中 {cs['cache_read']:,}（{cs['hit_rate']:.0f}%）"
+            if cs["cache_creation"]:
+                cache_txt += f" · 写入 {cs['cache_creation']:,}"
+        ui.plain(f"  累计 tokens：in {t['input']:,} · out {t['output']:,}{cache_txt}"
                  "（费用按服务商定价）")
     elif name == "/context":
         s = agent.session
@@ -1064,6 +1068,10 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
         ui.plain(f"  model     {agent.config.model}")
         ui.plain(f"  provider  {agent.config.provider}   mode  {agent.config.mode}"
                  f"   style  {agent.config.output_style}")
+        fallbacks = getattr(agent.provider, "providers", None)
+        if fallbacks and len(fallbacks) > 1:
+            ui.plain(f"  failover  {len(fallbacks) - 1} 个备用："
+                     + " → ".join(p.model for p in fallbacks[1:]))
         ui.plain(f"  messages  {len(s.messages)}   checkpoints  "
                  f"{len(agent.checkpoints.entries) if agent.checkpoints else 0}")
         ui.plain(f"  context   ~{s.context_tokens():,} tokens (limit {agent.config.context_limit:,})")
@@ -1260,7 +1268,7 @@ def main(argv=None) -> int:
     # 清理过旧的检查点目录，防止 ~/.minicode/checkpoints 无限膨胀
     prune_checkpoint_roots(Path.home() / ".minicode" / "checkpoints", keep=20)
 
-    provider = make_provider(cfg)
+    provider = make_provider(cfg, on_failover=lambda msg: ui.warn(msg))
     mcp_manager = McpManager(cfg.mcp_servers, cwd)
     if mcp_manager.clients:
         atexit.register(mcp_manager.stop_all)

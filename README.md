@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.16.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 294 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.17.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 304 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -16,6 +16,7 @@
 - **跨会话记忆**：项目大脑自动沉淀事实/坑/决策/失败教训，失败回合自动复盘入脑，越用越懂你的项目
 - **自检门禁**：`/verify pytest -q` 后每次改动自动跑验收命令，失败自动修复（最多两轮）
 - **多模型适配层**：429 退避、思考模型回传、参数垫片、非流式回退、工具调用格式归一化——OpenAI 兼容端与 Anthropic 同一套鲁棒性语义；`think/ultrathink` 关键词落地生效、缓存命中可见。换任意端点先跑 `--probe` 诊断
+- **模型故障转移**：`fallbacks` 配置备用模型链，主模型连接失败/限速耗尽/不支持工具时自动切换继续同一回合（可跨厂商，切换实时提示，部分输出绝不重放）
 - **平台化**：`serve` 本地 HTTP API、本地 Python 插件目录、MCP（stdio + HTTP）、自定义命令/子智能体/技能、headless JSON 输出
 - **工程保险**：文件检查点（/undo /rewind）、会话持久化、上下文自动压缩（默认 1M，/limit 自定义）、敏感路径门禁、SSRF 防护
 - **智能体行为优化**：工具结果按类型智能摘要（大文件按行折叠/grep 按文件分组/bash 保留错误行）、工具失败自动归因并给出修正建议、同类错误连续 3 次强制换策略、上下文压缩按工具重要性区分保留比例（写操作比读操作保留更多）
@@ -119,6 +120,23 @@ minicode --install ./my-pack --user                           # 装到用户级
 | Anthropic | （默认） | `claude-sonnet-4-5` |
 | Ollama 本地 | `http://localhost:11434/v1` | `qwen3:8b`（key 随便填） |
 
+### 模型故障转移
+
+在 `~/.minicode.json` 配置备用模型链，主模型失败（连接/限速耗尽/不支持工具等）自动切换继续同一回合：
+
+```json
+{
+  "provider": "openai", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+  "api_key": "...", "model": "glm-4.6",
+  "fallbacks": [
+    "glm-4.6-air",
+    {"provider": "anthropic", "model": "claude-sonnet-4-5", "api_key": "..."}
+  ]
+}
+```
+
+字符串即模型名（端点/密钥继承主配置）；对象可指定独立 provider/base_url/api_key 实现跨厂商切换。切换过程实时提示；`/cost` 与回合 token 行显示缓存命中率。
+
 ## 使用指南
 
 ### 快捷交互
@@ -186,7 +204,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 294 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 304 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

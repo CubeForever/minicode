@@ -89,6 +89,16 @@ class Session:
     def context_tokens(self) -> int:
         return (self.last_usage or {}).get("input") or self.approx_tokens()
 
+    def cache_stats(self) -> dict:
+        """缓存命中统计（OpenAI 与 Anthropic 归一化后语义一致：
+        input 为总输入，cache_read 是其中命中缓存的部分）。"""
+        t = self.total_usage
+        cached = t.get("cache_read") or 0
+        total = t.get("input") or 0
+        return {"cache_read": cached,
+                "cache_creation": t.get("cache_creation") or 0,
+                "hit_rate": (cached / total * 100) if total else 0.0}
+
     # ---------- microcompaction ----------
 
     # Tools whose results matter more for future edits keep more context.

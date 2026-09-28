@@ -214,8 +214,9 @@ class UI:
 
     def token_note(self, in_tok: int, out_tok: int, pct=None, cache_read: int = 0):
         extra = f" · ctx {pct:.0f}%" if pct is not None else ""
-        if cache_read:
-            extra += gray(f" · 缓存命中 {_fmt_tokens(cache_read)}")
+        if cache_read and in_tok:
+            extra += gray(f" · 缓存 {_fmt_tokens(cache_read)}"
+                          f" ({min(100.0, cache_read / in_tok * 100):.0f}%)")
         self._write(gray(f"  ▲ in {in_tok:,} · out {out_tok:,}{extra}") + "\n")
         self._need_newline = False
 

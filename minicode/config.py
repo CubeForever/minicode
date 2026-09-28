@@ -33,8 +33,25 @@ PROVIDER_DEFAULTS = {
 RESTRICTED_KEYS = {
     "api_key", "base_url", "mcp_servers", "mcpServers", "hooks",
     "permissions", "verify_command", "extra_body", "webfetch_allow_private",
+    "fallbacks",
 }
 _RESTRICTED_DICT_KEYS = {"permissions", "extra_body", "mcp_servers", "hooks"}
+
+
+def _normalize_fallbacks(value) -> list:
+    """fallbacks 配置 → [{"model": 必填, "provider"/"base_url"/"api_key" 可选}]。"""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for fb in value:
+        if isinstance(fb, str):     # 简写：仅模型名，其余继承主配置
+            fb = {"model": fb}
+        if isinstance(fb, dict) and fb.get("model"):
+            out.append({"model": str(fb["model"]),
+                        "provider": fb.get("provider"),
+                        "base_url": fb.get("base_url"),
+                        "api_key": fb.get("api_key")})
+    return out
 
 
 @dataclass
@@ -59,6 +76,7 @@ class Config:
     turn_budget: int = 0                             # max tokens per turn (0 = off)
     save_sessions: bool = True                       # False 时不落盘会话历史（隐私模式）
     webfetch_allow_private: bool = False             # allow web_fetch to hit internal IPs
+    fallbacks: list = field(default_factory=list)    # 模型故障转移：[{"model": ..., "provider"/"base_url"/"api_key" 可选}]
     extra_dirs: list = field(default_factory=list)   # /add-dir
     project_restricted: dict = field(default_factory=dict)  # 项目配置中的受限字段（信任门禁后生效）
     plugins_allowed: bool = True                     # 项目信任门禁结果（cli 设置）
@@ -175,6 +193,7 @@ def load_config(args) -> Optional[Config]:
         turn_budget=int(merged.get("turn_budget") or 0),
         save_sessions=bool(merged.get("save_sessions", True)),
         webfetch_allow_private=bool(merged.get("webfetch_allow_private", False)),
+        fallbacks=_normalize_fallbacks(merged.get("fallbacks")),
         project_restricted=restricted,
         extra_dirs=list(merged.get("extra_dirs") or []),
         append_system_prompt=str(getattr(args, "append_system_prompt", "") or ""),

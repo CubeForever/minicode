@@ -804,11 +804,112 @@ class AnthropicProvider(Provider):
                                             thinking_blocks)}
 
 
-def make_provider(cfg) -> Provider:
+class FailoverProvider(Provider):
+    """模型故障转移：主模型失败时自动切换备用模型继续同一回合。
+
+    触发条件：连接失败 / 限速重试耗尽 / 5xx / 模型不存在 / 端点不支持工具
+    等 LLMError，且**尚未产出任何流事件**（部分输出绝不跨模型重放）。
+    会话消息是中性格式，跨厂商切换无损。on_event 回调向用户展示切换过程。
+    """
+
+    def __init__(self, primary: Provider, fallbacks: List[Provider], on_event=None):
+        # providers 必须先于 super().__init__ 赋值：model 是 property，
+        # 其 setter 会写 providers[0].model
+        self.providers = [primary] + list(fallbacks)
+        super().__init__(primary.model, primary.api_key, primary.base_url,
+                         primary.max_tokens, primary.extra_body)
+        self.on_event = on_event
+        self.active = 0   # 当前生效的 provider 下标
+
+    # -- delegation --
+    @property
+    def primary(self) -> Provider:
+        return self.providers[0]
+
+    @property
+    def model(self) -> str:
+        return self.providers[self.active].model
+
+    @model.setter
+    def model(self, value):
+        self.providers[0].model = value   # /model 切换改主模型并回到主模型
+        self.active = 0
+
+    @property
+    def name(self) -> str:
+        n = len(self.providers) - 1
+        return f"{self.primary.name}+{n}备用" if n else self.primary.name
+
+    @property
+    def reasoning_effort(self):
+        return getattr(self.primary, "reasoning_effort", "")
+
+    @reasoning_effort.setter
+    def reasoning_effort(self, value):
+        for p in self.providers:
+            if hasattr(p, "reasoning_effort"):
+                p.reasoning_effort = value
+
+    def _notify(self, msg: str):
+        if self.on_event:
+            try:
+                self.on_event(msg)
+            except Exception:
+                pass
+
+    def stream(self, messages, tools, system, thinking: int = 0):
+        last_err: Optional[LLMError] = None
+        for i, provider in enumerate(self.providers):
+            yielded = [False]
+            try:
+                for ev in provider.stream(messages, tools, system, thinking):
+                    yielded[0] = True
+                    yield ev
+                return
+            except LLMError as e:
+                if yielded[0]:
+                    raise   # 部分输出已流出——绝不跨模型重放
+                last_err = e
+                if i + 1 < len(self.providers):
+                    nxt = self.providers[i + 1]
+                    self._notify(f"模型 {provider.model} 调用失败（{str(e)[:120]}）"
+                                 f"—— 自动切换备用模型 {nxt.model}")
+                    self.active = i + 1
+        raise last_err   # 所有模型都失败：抛最后一个错误
+
+
+def _fallback_cfg(cfg, fb: dict):
+    """备用模型条目 → 独立 Config。model 必填，provider/base_url/api_key
+    缺省继承主配置。"""
+    import dataclasses
+    return dataclasses.replace(
+        cfg,
+        provider=str(fb.get("provider") or cfg.provider),
+        model=str(fb.get("model") or ""),
+        base_url=str(fb.get("base_url") or cfg.base_url or ""),
+        api_key=str(fb.get("api_key") or cfg.api_key or ""),
+        fallbacks=[],
+    )
+
+
+def make_provider(cfg, on_failover=None) -> Provider:
     fake = os.environ.get("MINICODE_FAKE_LLM", "").strip()
     if fake:
         from .fake import FakeProvider
         return FakeProvider.demo() if fake.lower() == "demo" else FakeProvider.from_file(fake)
+    primary = _build_single_provider(cfg)
+    # 直接构造 Config 可能绕过 load_config 的归一化——这里再做一次
+    from .config import _normalize_fallbacks
+    fallback_cfgs = [fb for fb in _normalize_fallbacks(getattr(cfg, "fallbacks", None))
+                     if fb.get("model")]
+    if not fallback_cfgs:
+        return primary
+    fallbacks = [_build_single_provider(_fallback_cfg(cfg, fb))
+                 for fb in fallback_cfgs]
+    return FailoverProvider(primary, fallbacks, on_event=on_failover)
+
+
+def _build_single_provider(cfg) -> Provider:
     if cfg.provider == "anthropic":
         return AnthropicProvider(cfg.model, cfg.api_key, cfg.base_url, cfg.max_tokens,
                                  extra_body=cfg.extra_body)
@@ -820,7 +921,13 @@ def make_provider(cfg) -> Provider:
 
 # ---------- diagnostics: model listing & live probe ----------
 
+def _unwrap(provider: Provider) -> Provider:
+    """FailoverProvider 委托到主 provider（模型列表/体检只关心主端点）。"""
+    return getattr(provider, "primary", provider)
+
+
 def list_models(provider: Provider) -> List[str]:
+    provider = _unwrap(provider)
     if not isinstance(provider, OpenAIProvider):
         raise LLMError("/models 仅支持 OpenAI 兼容端")
     req = urllib.request.Request(
@@ -840,6 +947,7 @@ def list_models(provider: Provider) -> List[str]:
 def probe_provider(provider: Provider) -> List[Tuple[str, bool, str, float]]:
     """Live compatibility probe for OpenAI-compatible endpoints.
     Returns rows: (step, ok, detail, elapsed_seconds)."""
+    provider = _unwrap(provider)
     if not isinstance(provider, OpenAIProvider):
         return [("probe", False, "仅支持 OpenAI 兼容端（中转站/自建）", 0.0)]
     rows: List[Tuple[str, bool, str, float]] = []

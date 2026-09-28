@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.17.0 (2026-09-28)
+
+模型故障转移与缓存可观测（v0.17 主题：**Failover + Cache Insight**）：
+
+**模型故障转移（FailoverProvider）**
+
+- 配置 `fallbacks` 后主模型失败自动切换备用：
+  ```json
+  {"fallbacks": [{"model": "glm-4.6"},
+                 {"provider": "anthropic", "model": "claude-sonnet-4-5", "api_key": "..."}]}
+  ```
+  model 必填，provider/base_url/api_key 缺省继承主配置，支持 `"fallbacks": ["模型名"]` 字符串简写
+- 触发条件：连接失败 / 限速重试耗尽 / 5xx / 模型不存在 / 端点不支持工具等，且**尚未产出任何流事件**——部分输出绝不跨模型重放
+- 跨厂商切换无损：会话消息是中性格式，OpenAI 兼容主模型失败可切 Anthropic 备用；切换过程实时提示（终端 ⚠ / Web warn 事件）；上下文压缩（/compact）同样享受故障转移
+- `/model` 切换作用于主模型并立即切回主模型；`/status` 显示备用链；`/models` 与 `--probe` 自动委托主端点
+- 安全：`fallbacks` 加入项目配置受限键（可携带 api_key——恶意仓库的 fallbacks 必须过信任门禁才生效）
+
+**cache 命中率深度展示**
+
+- 归一化语义明确：input 为总输入，cache_read 是其中命中缓存的部分（OpenAI prompt_tokens_details 与 Anthropic cache 字段统一到同一语义）
+- `/cost`：`in 45.2k · out 3.1k · 缓存命中 38.0k（84%）· 写入 2.1k`
+- 回合后 token 行（`▲ in … · 缓存 9.9k (80%)`）与 Web 底栏使用量同步显示命中率；新增 `Session.cache_stats()`
+
+
 ## 0.16.0 (2026-09-28)
 
 分发层（v0.16 主题：**扩展生态 + PyPI 发布 + MCP 升级**）：

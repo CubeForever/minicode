@@ -696,7 +696,8 @@ class WebUIServer:
             self._mcp.stop_all()
         if cwd is not None:
             self.cfg.cwd = Path(cwd)
-        provider = make_provider(self.cfg)
+        provider = make_provider(
+            self.cfg, on_failover=lambda msg: self._emit({"t": "warn", "text": msg}))
         session = Session() if new_session else old.session
         self.agent = _build_agent(self.cfg, provider, session,
                                   self.bridge, self._mcp)
@@ -766,9 +767,13 @@ class WebUIServer:
             return {"output": f"reasoning effort：{cfg.reasoning_effort or '默认'}"}
         if name == "cost":
             t = s.total_usage
-            cached = t.get("cache_read") or 0
-            extra = f" · 缓存命中 {cached:,}" if cached else ""
-            return {"output": f"累计 tokens：in {t['input']:,} · out {t['output']:,}{extra}"}
+            cs = s.cache_stats()
+            cache_txt = ""
+            if cs["cache_read"]:
+                cache_txt = f" · 缓存命中 {cs['cache_read']:,}（{cs['hit_rate']:.0f}%）"
+                if cs["cache_creation"]:
+                    cache_txt += f" · 写入 {cs['cache_creation']:,}"
+            return {"output": f"累计 tokens：in {t['input']:,} · out {t['output']:,}{cache_txt}"}
         if name == "context":
             by = {}
             for m in s.messages:

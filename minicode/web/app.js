@@ -514,8 +514,11 @@ async function refreshStatus() {
       ratio > 0.8 ? "var(--err)" : ratio > 0.5 ? "var(--warn)" : "var(--dim)";
     $("#ctxText").textContent =
       `${fmtTok(s.context_tokens)} / ${fmtTok(s.context_limit)} tok`;
+    const u = s.usage || {};
+    const hit = (u.cache_read && u.input)
+      ? ` · 缓存 ${Math.round(u.cache_read / u.input * 100)}%` : "";
     $("#usage").textContent =
-      `ctx ${fmtTok(s.context_tokens)} · in ${fmtTok(s.usage.input)} · out ${fmtTok(s.usage.output)}`;
+      `ctx ${fmtTok(s.context_tokens)} · in ${fmtTok(u.input)} · out ${fmtTok(u.output)}${hit}`;
     if (document.activeElement !== $("#modeSel")) $("#modeSel").value = s.mode;
     $("#planBar").hidden = !(s.mode === "plan" && !s.busy);
     setBusy(s.busy);
