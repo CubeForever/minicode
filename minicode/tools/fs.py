@@ -83,6 +83,23 @@ def _note_read(ctx: ToolContext, p: Path):
         pass
 
 
+def _require_read(ctx: ToolContext, p: Path, action: str):
+    """Hard read-before-edit rule (same as Claude Code): modifying a file that
+    was never read in this session is refused — no blind edits from memory."""
+    recorded = getattr(ctx.session, "file_mtimes", {}).get(str(p))
+    if recorded is None:
+        raise ToolError(
+            f"Read-before-edit: {action} requires reading the file first. "
+            f"Call read_file on '{p.name}' to confirm its current content, then retry.")
+    try:
+        if abs(os.path.getmtime(p) - recorded) > 0.5:
+            raise ToolError(
+                "File has been modified since it was last read — re-read it "
+                "with read_file, then apply your edit to the current content.")
+    except OSError:
+        pass
+
+
 class ReadFileTool(Tool):
     name = "read_file"
     kind = "read"
@@ -149,7 +166,9 @@ class WriteFileTool(Tool):
     name = "write_file"
     kind = "write"
     description = ("Create a new file or completely overwrite an existing one. "
-                   "To change part of an existing file, prefer edit_file.")
+                   "To change part of an existing file, prefer edit_file. "
+                   "Overwriting an existing file requires reading it first "
+                   "(read-before-edit is enforced).")
     input_schema = {
         "type": "object",
         "properties": {
@@ -187,6 +206,8 @@ class WriteFileTool(Tool):
         p = _resolve(ctx, str(args.get("path") or ""))
         content = str(args.get("content") or "")
         existed = p.exists()
+        if existed:
+            _require_read(ctx, p, "overwrite")   # 覆盖已有文件前必须先读
         newline = _dominant_newline(_read_text(p)) if existed else "\n"
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +224,8 @@ class EditFileTool(Tool):
     kind = "write"
     description = ("Exact string replacement in a file. old_string must match uniquely "
                    "(include enough surrounding context); set replace_all=true to replace "
-                   "every occurrence.")
+                   "every occurrence. The file must have been read with read_file first "
+                   "(read-before-edit is enforced).")
     input_schema = {
         "type": "object",
         "properties": {
@@ -246,16 +268,8 @@ class EditFileTool(Tool):
             raise ToolError("old_string is empty (use write_file to create files)")
         if old == new:
             raise ToolError("old_string and new_string are identical")
+        _require_read(ctx, p, "edit_file")   # 硬性 read-before-edit
         text, newline = _read_text_normalized(p)
-        recorded = getattr(ctx.session, "file_mtimes", {}).get(str(p))
-        if recorded is not None:
-            try:
-                if abs(os.path.getmtime(p) - recorded) > 0.5:
-                    raise ToolError(
-                        "File has been modified since it was last read — re-read it "
-                        "with read_file, then apply your edit to the current content.")
-            except OSError:
-                pass
         count = text.count(old)
         if count == 0:
             raise ToolError("old_string not found — re-read the file and copy the exact "

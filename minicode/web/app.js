@@ -1,7 +1,7 @@
-/* minicode web — 原生 JS，无构建、无依赖。DeepSeek 风格渲染层。 */
+/* minicode web — 原生 JS，无构建、无依赖。DeepSeek 风格渲染层。
+   鉴权：HttpOnly cookie（首次经 ?token= 链接种下），前端不持有任何凭据。 */
 "use strict";
 
-const TOKEN = "__TOKEN__";
 const $ = (s, el) => (el || document).querySelector(s);
 const chat = $("#chat");
 
@@ -465,7 +465,7 @@ async function answerAsk(id, value, card) {
 async function api(path, body) {
   const r = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Minicode-Token": TOKEN },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body || {}),
   });
   if (!r.ok) {
@@ -476,7 +476,7 @@ async function api(path, body) {
   return r.json();
 }
 async function getStatus() {
-  const r = await fetch("/api/status", { headers: { "X-Minicode-Token": TOKEN } });
+  const r = await fetch("/api/status", {});
   return r.json();
 }
 
@@ -484,9 +484,17 @@ async function getStatus() {
 function setBusy(b) {
   document.body.classList.toggle("busy", b);
   $("#btnSend").disabled = b;
+  $("#btnStop").hidden = !b;
   if (!b) {
     hideShimmer();
     closeCurrent();
+    // 停止/结束后：仍挂着的确认卡片按「已中断」落定
+    document.querySelectorAll(".confirm-card .actions").forEach(a => {
+      const card = a.closest(".confirm-card");
+      a.remove();
+      if (card && !card.querySelector(".approved, .declined"))
+        card.appendChild(el("div", "declined", "✗ 已中断"));
+    });
     const stamp = ticket && ticket.err ? "ERRORS" : "DONE";
     closeTicket(ticketErr ? "ERRORS" : stamp);
     ticketErr = false;
@@ -523,7 +531,7 @@ function fmtTok(n) {
 
 /* ---------------- SSE 事件流 ---------------- */
 function connectEvents() {
-  const es = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}`);
+  const es = new EventSource("/api/events");
   const connText = $("#connText");
   es.onopen = () => { $("#conn").classList.add("on"); connText.textContent = "已连接"; };
   es.onerror = () => { $("#conn").classList.remove("on"); connText.textContent = "重连中…"; };
@@ -620,6 +628,7 @@ input.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 });
 $("#btnSend").addEventListener("click", send);
+$("#btnStop").addEventListener("click", () => api("/api/stop").catch(() => {}));
 async function send() {
   const text = input.value.trim();
   if (!text || document.body.classList.contains("busy")) return;
@@ -661,7 +670,7 @@ function hideCmdHint() { $("#cmdHint").hidden = true; }
 async function refreshSessions() {
   try {
     const d = await fetch("/api/sessions",
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     const box = $("#sessions");
     box.innerHTML = "";
     const mkRow = (s, archived) => {
@@ -738,7 +747,7 @@ async function openSession(name, archived) {
     activeArchived = !!archived;
     document.body.classList.remove("side-open");
     const hist = await fetch("/api/messages",
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     chat.innerHTML = "";
     ticket = null; ticketNo = 0;
     renderHistory(hist);
@@ -757,7 +766,7 @@ function shortenPath(p) {
 async function refreshWorkspaces() {
   try {
     const d = await fetch("/api/workspaces",
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     $("#wsPath").textContent = shortenPath(d.current || "");
     $("#wsPath").title = d.current || "";
     const list = $("#wsList");
@@ -784,7 +793,7 @@ async function refreshWorkspaces() {
 async function openSettings() {
   try {
     const c = await fetch("/api/config",
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     $("#cfgProvider").value = c.provider;
     $("#cfgBase").value = c.base_url || "";
     $("#cfgKey").value = "";
@@ -867,7 +876,7 @@ async function openExtensions() {
   $("#extBody").innerHTML = `<div class="side-empty">加载中…</div>`;
   try {
     extData = await fetch("/api/extensions",
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     renderExtTabs();
     renderExtTab();
   } catch (e) {
@@ -1011,7 +1020,7 @@ async function loadDir(path) {
   list.innerHTML = `<div class="side-empty">加载中…</div>`;
   try {
     const d = await fetch("/api/fs/list?path=" + encodeURIComponent(path),
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     if (d.error) { list.innerHTML = `<div class="side-empty">${esc(d.error)}</div>`; return; }
     $("#dirPath").value = d.path || $("#dirPath").value;
     $("#dirUp").disabled = !d.parent;
@@ -1165,7 +1174,7 @@ $("#btnProbe").addEventListener("click", async () => {
   $("#probeOut").textContent = "探测中…";
   try {
     const d = await fetch("/api/probe",
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     if (d.error) { $("#probeOut").textContent = d.error; return; }
     $("#probeOut").textContent = d.rows.map(r => `${r[1] ? "✓" : "✗"} ${r[0]}`).join(" · ");
   } catch (e) {
@@ -1243,7 +1252,7 @@ chat.addEventListener("click", e => {
     const s = await getStatus();
     if (!s.busy) {
       const hist = await fetch("/api/messages",
-        { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+        {}).then(r => r.json());
       renderHistory(hist);
       if ((hist.messages || []).length) hideHero();
     }
@@ -1263,7 +1272,7 @@ async function openExtDetail(tab, name) {
   try {
     const d = await fetch(
       `/api/ext/detail?type=${encodeURIComponent(tab)}&name=${encodeURIComponent(name)}`,
-      { headers: { "X-Minicode-Token": TOKEN } }).then(r => r.json());
+      {}).then(r => r.json());
     if (d.error) { $("#detailBody").innerHTML = `<div class="side-empty">${esc(d.error)}</div>`; return; }
     const body = $("#detailBody");
     body.innerHTML = "";

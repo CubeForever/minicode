@@ -42,6 +42,7 @@ def test_edit_file_on_crlf_file(tmp_path):
     ctx = make_ctx(tmp_path)
     p = tmp_path / "win.py"
     p.write_bytes("x = 1\r\nold line\r\ny = 2\r\n".encode())
+    ReadFileTool().run({"path": "win.py"}, ctx)   # read-before-edit
     EditFileTool().run({"path": "win.py", "old_string": "old line",
                         "new_string": "new line"}, ctx)
     data = p.read_bytes()
@@ -53,6 +54,7 @@ def test_write_file_overwrite_preserves_crlf(tmp_path):
     ctx = make_ctx(tmp_path)
     p = tmp_path / "w.txt"
     p.write_bytes("a\r\nb\r\n".encode())
+    ReadFileTool().run({"path": "w.txt"}, ctx)   # read-before-edit
     WriteFileTool().run({"path": "w.txt", "content": "c\nd\n"}, ctx)
     assert p.read_bytes() == b"c\r\nd\r\n"
 
@@ -61,6 +63,7 @@ def test_apply_patch_on_crlf_file(tmp_path):
     ctx = make_ctx(tmp_path)
     p = tmp_path / "m.py"
     p.write_bytes("keep\r\nREMOVE ME\r\nkeep2\r\n".encode())
+    ReadFileTool().run({"path": "m.py"}, ctx)   # read-before-edit
     patch = ("*** Begin Patch\n*** Update File: m.py\n"
              "-REMOVE ME\n+inserted\n*** End Patch")
     ApplyPatchTool().run({"patch": patch}, ctx)
@@ -74,6 +77,7 @@ def test_apply_patch_rejects_duplicate_file_sections(tmp_path):
     ctx = make_ctx(tmp_path)
     p = tmp_path / "m.py"
     p.write_text("a = 1\nb = 2\n", encoding="utf-8")
+    ReadFileTool().run({"path": "m.py"}, ctx)   # read-before-edit
     patch = ("*** Begin Patch\n"
              "*** Update File: m.py\n-a = 1\n+a = 10\n"
              "*** Update File: m.py\n-b = 2\n+b = 20\n"

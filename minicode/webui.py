@@ -43,6 +43,7 @@ _STATIC = {
 }
 WORKSPACES_FILE = Path.home() / ".minicode" / "workspaces.json"
 _SESSION_NAME = re.compile(r"[\w\-]{1,120}")
+COOKIE_NAME = "minicode_token"
 
 
 def _load_workspaces() -> dict:
@@ -73,6 +74,7 @@ class WebBridgeUI(UI):
         self._subs: List[Queue] = []
         self._lock = threading.Lock()
         self._pending = {}  # id -> (Event, {"value": ...})
+        self._stop_check = None  # callable -> bool，回合停止时解除确认阻塞
 
     # ---------- 事件总线 ----------
     def subscribe(self) -> Queue:
@@ -103,10 +105,23 @@ class WebBridgeUI(UI):
         with self._lock:
             self._pending[ask_id] = (ev, box)
         self._emit({"t": kind, "id": ask_id, **payload})
-        ev.wait()  # 与 REPL 的 input() 一样阻塞，直到浏览器答复
+        while not ev.wait(0.2):
+            # 回合被停止时，未答复的卡片按「拒绝」处理，避免 agent 线程卡死
+            if self._stop_check is not None and self._stop_check():
+                box["value"] = "n" if kind == "confirm" else []
+                break
         with self._lock:
             self._pending.pop(ask_id, None)
         return box["value"]
+
+    def cancel_pending(self):
+        """停止回合：所有待答复卡片立即按拒绝落定。"""
+        with self._lock:
+            pending = list(self._pending.values())
+        for ev, box in pending:
+            if box["value"] is None:
+                box["value"] = "n"
+            ev.set()
 
     def resolve(self, ask_id: str, value) -> bool:
         with self._lock:
@@ -181,6 +196,7 @@ class WebUIServer:
         self.bridge = WebBridgeUI()
         self.agent = _build_agent(cfg, provider, session or Session(),
                                   self.bridge, mcp_manager)
+        self.bridge._stop_check = lambda: self.agent.interrupt_event.is_set()
         self.host = host
         self.busy = False
         self.token = secrets.token_hex(16)
@@ -196,6 +212,7 @@ class WebUIServer:
                 body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._maybe_set_cookie()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -208,10 +225,46 @@ class WebUIServer:
                 host = (self.headers.get("Host") or "").split(":")[0]
                 return host in ("127.0.0.1", "localhost")
 
-            def _token_ok(self, query: dict) -> bool:
-                supplied = (self.headers.get("X-Minicode-Token")
-                            or (query.get("token") or [""])[0])
-                return hmac.compare_digest(str(supplied or ""), outer.token)
+            def _cookie_token(self) -> str:
+                for part in (self.headers.get("Cookie") or "").split(";"):
+                    k, _, v = part.strip().partition("=")
+                    if k == COOKIE_NAME:
+                        return v
+                return ""
+
+            def _auth(self, query: dict) -> bool:
+                """token 鉴权：Header / query / HttpOnly cookie 三选一。
+                经 Header 或 query 通过时种下 cookie，浏览器后续请求不再
+                需要携带明文 token（配合 SameSite=Strict 防 CSRF）。"""
+                self._fresh_cookie = False
+                for cand in (self.headers.get("X-Minicode-Token"),
+                             (query.get("token") or [""])[0]):
+                    if cand and hmac.compare_digest(str(cand), outer.token):
+                        self._fresh_cookie = True
+                        return True
+                cookie = self._cookie_token()
+                return bool(cookie and hmac.compare_digest(cookie, outer.token))
+
+            def _maybe_set_cookie(self):
+                if getattr(self, "_fresh_cookie", False):
+                    self.send_header(
+                        "Set-Cookie",
+                        f"{COOKIE_NAME}={outer.token}; Path=/; Max-Age=604800; "
+                        "HttpOnly; SameSite=Strict")
+                    self._fresh_cookie = False
+
+            def _unauthorized_page(self):
+                """浏览器直接打开未带 token 的根路径：给出指引而不是泄露任何资源。"""
+                body = ("<!doctype html><meta charset='utf-8'>"
+                        "<title>minicode</title>"
+                        "<body style='margin:0;height:100vh;display:grid;place-items:center;"
+                        "background:#121110;color:#e9e5dd;font-family:monospace'>"
+                        "<p>缺少访问令牌——请使用终端启动时打印的链接（含 ?token=…）</p>").encode("utf-8")
+                self.send_response(401)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
             def _body(self) -> dict:
                 try:
@@ -235,13 +288,15 @@ class WebUIServer:
                     return self._forbidden()
                 parsed = urlparse(self.path)
                 path, query = parsed.path, self._query()
+                if path == "/api/health":
+                    return self._json(200, {"ok": True, "mode": "web"})
+                if not self._auth(query):
+                    if path in ("/", "/index.html"):
+                        return self._unauthorized_page()
+                    return self._json(401, {"error": "unauthorized"})
                 if path in _STATIC:
                     fname, ctype = _STATIC[path]
                     return self._static(fname, ctype)
-                if path == "/api/health":
-                    return self._json(200, {"ok": True, "mode": "web"})
-                if not self._token_ok(query):
-                    return self._json(401, {"error": "unauthorized"})
                 if path == "/api/events":
                     return self._sse()
                 if path == "/api/status":
@@ -292,13 +347,13 @@ class WebUIServer:
 
             def _static(self, fname: str, ctype: str):
                 page = (WEB_DIR / fname).read_text(encoding="utf-8")
-                if "__TOKEN__" in page:  # 每个进程注入随机 token（占位符在 app.js）
-                    page = page.replace("__TOKEN__", outer.token)
+                # 安全：静态资源不再内嵌 token —— 浏览器凭 HttpOnly cookie 访问
                 if "__VERSION__" in page:
                     page = page.replace("__VERSION__", outer._version())
                 body = page.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
+                self._maybe_set_cookie()
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
@@ -309,6 +364,7 @@ class WebUIServer:
                 try:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self._maybe_set_cookie()
                     self.send_header("Cache-Control", "no-cache")
                     self.end_headers()
                     self.wfile.write(b"data: {\"t\": \"hello\"}\n\n")
@@ -335,7 +391,7 @@ class WebUIServer:
                 path, query = urlparse(self.path).path, self._query()
                 if path == "/api/health":
                     return self._json(200, {"ok": True})
-                if not self._token_ok(query):
+                if not self._auth(query):
                     return self._json(401, {"error": "unauthorized"})
                 body = self._body()
                 if path == "/api/turn":
@@ -348,6 +404,13 @@ class WebUIServer:
                         outer.busy = True
                     threading.Thread(target=outer._work, args=(prompt,),
                                      daemon=True).start()
+                    return self._json(200, {"ok": True})
+                if path == "/api/stop":
+                    if not outer.busy:
+                        return self._json(409, {"error": "no turn is running"})
+                    outer.agent.interrupt_event.set()
+                    outer.bridge.cancel_pending()
+                    outer._emit({"t": "info", "text": "正在停止当前回合…"})
                     return self._json(200, {"ok": True})
                 if path == "/api/answer":
                     ask_id = str(body.get("id") or "")
@@ -424,7 +487,7 @@ class WebUIServer:
                     try:
                         return self._json(200, outer._dispatch_command(line))
                     except LLMError as e:
-                        return self._json(200, {"error": str(e)})
+                        return self._json(400, {"error": str(e)})
                     except Exception as e:
                         return self._json(500, {"error": f"{type(e).__name__}: {e}"})
                 if path == "/api/shell":
@@ -578,8 +641,9 @@ class WebUIServer:
     def _config_update(self, body: dict):
         from .config import USER_CONFIG
         cfg = self.cfg
-        if self.busy:
-            return 409, {"error": "a turn is running"}
+        with self._lock:
+            if self.busy:
+                return 409, {"error": "a turn is running"}
         if body.get("provider") in ("openai", "anthropic"):
             cfg.provider = body["provider"]
         if body.get("base_url") is not None:

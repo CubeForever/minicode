@@ -1,7 +1,8 @@
 /* ============================================================
-   minicode web — Ink & Ember 设计系统
+   minicode web — Ink & Ember × JOB TICKET 设计系统
    成熟产品的克制：近单色 · 发丝线 · 衬线编辑感 · 等宽元数据
    暖石墨暗色（默认） / 暖象牙浅色 · 品牌符号：终端提示符 ❯
+   v0.14 起回合以「工单」呈现（编号 / 状态章 / 打孔撕裂线 / 签核）
    ============================================================ */
 
 :root {
@@ -11,9 +12,11 @@
   --panel: #161412;
   --panel2: #201d19;
   --bubble: #201d19;
+  --bubble-border: #2f2b25;   /* 工单内用户气泡描边 */
   --code-bg: #1a1815;
   --border: #2b2823;
   --border2: #3a362f;
+  --inset: inset 0 1px 0 rgba(255, 255, 255, .04);   /* 工单顶缘受光 */
   --text: #e9e5dd;
   --dim: #97907f;
   --faint: #8a8375;   /* 对比度 ≥4.5:1（小号元数据文本） */
@@ -35,9 +38,11 @@ html[data-theme="light"] {
   --panel: #ffffff;
   --panel2: #f1efe8;
   --bubble: #f1efe8;
+  --bubble-border: #e0dccd;
   --code-bg: #f7f5ef;
   --border: #e6e2d7;
   --border2: #d5d0c2;
+  --inset: inset 0 1px 0 rgba(255, 255, 255, .7);
   --text: #23201b;
   --dim: #645e51;
   --faint: #7a7466;   /* 对比度 ≥4.5:1（小号元数据文本） */
@@ -769,6 +774,10 @@ textarea::placeholder { color: var(--faint); }
 }
 .send:hover { background: var(--accent-hover); }
 .send:disabled { background: var(--panel2); color: var(--faint); cursor: not-allowed; }
+.send.stop { background: var(--err); font-size: 11px; }
+.send.stop:hover { background: var(--err); filter: brightness(1.15); }
+/* display 声明会压过 UA 的 [hidden] 规则，必须显式还原隐藏语义 */
+.send[hidden] { display: none; }
 .conn {
   width: 7px; height: 7px;
   border-radius: 50%;
@@ -1035,7 +1044,7 @@ button, textarea, select, input { touch-action: manipulation; }
   .iconbtn { min-width: 40px; min-height: 40px; }
   .side-settings { padding: 7px 12px; }
   .sess-acts button { padding: 9px 10px; }
-  .btn, .newchat, .ws-current { min-height: 40px; }
+  .btn, .send, .ws-current { min-height: 40px; }
   .send { width: 40px; height: 40px; }
   .sess { padding-top: 9px; padding-bottom: 9px; }
 }
@@ -1293,6 +1302,9 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 }
 .tk-stamp.run { color: var(--accent); border-color: var(--accent); animation: pulse 1.4s infinite; }
 .tk-stamp.warn { color: var(--warn); border-color: var(--warn); }
+@keyframes pulse {
+  50% { opacity: .45; }
+}
 .tk-body { display: flex; flex-direction: column; gap: 13px; }
 .tk-body .msg.user {
   align-self: stretch;

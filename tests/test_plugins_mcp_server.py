@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -140,6 +141,15 @@ def server(tmp_path):
     srv = MinicodeServer(agent, host="127.0.0.1", port=0)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
+    # 等端口真正开始接受连接（全量跑时线程调度慢会导致连接被拒的偶发失败）
+    import socket as _socket
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            with _socket.create_connection(("127.0.0.1", srv.port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.02)
     yield srv, agent
     srv.shutdown()
 

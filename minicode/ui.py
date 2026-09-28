@@ -47,6 +47,24 @@ def cyan(t): return c(t, "36")
 def gray(t): return c(t, "90")
 
 
+# 主线程 input()（提示符/confirm/choose）期间置位：键盘监听线程暂停读键，
+# 把按键完整让给行编辑器。回合 watcher 与行编辑器通过它互斥访问 stdin。
+INPUT_ACTIVE = threading.Event()
+_WRITE_LOCK = threading.RLock()
+
+
+class stdin_claim:
+    """标记主线程即将独占 stdin。用法：with stdin_claim(): input(...)"""
+
+    def __enter__(self):
+        INPUT_ACTIVE.set()
+        return self
+
+    def __exit__(self, *exc):
+        INPUT_ACTIVE.clear()
+        return False
+
+
 class Spinner:
     """Animated spinner on the current line; safe to start/stop repeatedly."""
 
@@ -100,8 +118,9 @@ class UI:
 
     # -- low level --
     def _write(self, s: str):
-        sys.stdout.write(s)
-        sys.stdout.flush()
+        with _WRITE_LOCK:
+            sys.stdout.write(s)
+            sys.stdout.flush()
 
     def newline(self):
         if self._need_newline:
@@ -162,7 +181,7 @@ class UI:
         self._write(cyan("  │") + f"  {bold(cfg.model)}" + gray(f"  ·  {cfg.provider}"))
         self._write("\n" + cyan("  │") + f"  {mode}")
         self._write("\n" + cyan("  │") + gray(f"  {cwd}"))
-        self._write("\n" + cyan("  ╰─ ") + gray("/help 命令 · Ctrl+C 打断 · Ctrl+D 退出") + "\n\n")
+        self._write("\n" + cyan("  ╰─ ") + gray("/help 命令 · Esc 中断回合 · Ctrl+D 退出") + "\n\n")
 
     def rule(self, label: str = ""):
         """Turn separator: a dim horizontal rule with optional turn number."""
@@ -217,7 +236,8 @@ class UI:
     def prompt(self) -> str:
         self.newline()
         try:
-            return input(cyan("❯ "))
+            with stdin_claim():
+                return input(cyan("❯ "))
         except (EOFError, KeyboardInterrupt):
             self._write("\n")
             raise
@@ -244,7 +264,8 @@ class UI:
         self._write(yellow("  ╰─ ") + f"[{bold('y')}] 是  "
                     f"[{bold('a')}] 本次会话总是  [{bold('n')}] 否" + yellow(" ❯ "))
         try:
-            ans = input().strip().lower()
+            with stdin_claim():
+                ans = input().strip().lower()
         except (EOFError, KeyboardInterrupt):
             self._write("\n")
             return "n"
@@ -274,13 +295,15 @@ class UI:
             self._write(gray("    [o] 其他（自由输入）") + "\n")
         hint = "编号，逗号分隔" if multi else "编号"
         try:
-            raw = input(yellow(f"    选择{hint}（回车跳过）❯ ")).strip()
+            with stdin_claim():
+                raw = input(yellow(f"    选择{hint}（回车跳过）❯ ")).strip()
         except (EOFError, KeyboardInterrupt):
             self._write("\n")
             return []
         if raw.lower() == "o" and allow_other:
             try:
-                custom = input(cyan("    请输入你的答案 ❯ ")).strip()
+                with stdin_claim():
+                    custom = input(cyan("    请输入你的答案 ❯ ")).strip()
             except (EOFError, KeyboardInterrupt):
                 self._write("\n")
                 return []

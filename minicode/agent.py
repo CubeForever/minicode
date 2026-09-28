@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -54,6 +55,11 @@ THINK_BUDGETS = (
 )
 
 
+class Interrupted(Exception):
+    """协作式中断（终端 Esc / Web 停止按钮）。抛出时会话状态保持一致：
+    已发出的工具调用都已回填结果，可以直接开始下一回合。"""
+
+
 def thinking_budget(text: str) -> int:
     for rx, budget in THINK_BUDGETS:
         if rx.search(text or ""):
@@ -96,6 +102,7 @@ class Agent:
         self.system_prompt = ""
         self.tools_disabled = False      # set when the model rejects tools
         self._error_history = []         # (tool_name, error_signature) for repeat detection
+        self.interrupt_event = threading.Event()  # set → 协作式中断当前回合
         cwd = getattr(config, "cwd", None) or Path.cwd()
         self.ctx = ToolContext(cwd=cwd, config=config, session=session, ui=ui,
                                agent_factory=None)
@@ -103,6 +110,9 @@ class Agent:
     @property
     def mode(self) -> str:
         return self.config.mode
+
+    def _interrupted(self) -> bool:
+        return self.interrupt_event.is_set()
 
     def replace_session(self, session: Session) -> None:
         self.session = session
@@ -114,6 +124,7 @@ class Agent:
     # ---------- main loop ----------
 
     def run_turn(self, user_text: str) -> str:
+        self.interrupt_event.clear()   # 上一回合遗留的停止请求不带入新回合
         self.session.add(user_message(user_text))
         budget = 0
         if self.mode != "plan":
@@ -123,6 +134,8 @@ class Agent:
         turn_tokens = 0
         turn_budget = int(getattr(self.config, "turn_budget", 0) or 0)
         for _ in range(self.max_iterations):
+            if self._interrupted():
+                raise Interrupted()
             try:
                 msg, usage = self._step(budget)
             except ToolUnsupportedError:
@@ -131,6 +144,8 @@ class Agent:
                     self.ui.warn("该模型/中转不支持工具调用 —— 已降级为纯对话模式"
                                  "（无法读写文件与执行命令）。可换支持 tools 的模型。")
                     continue
+                raise
+            except Interrupted:
                 raise
             except KeyboardInterrupt:
                 self.ui.newline()
@@ -161,6 +176,9 @@ class Agent:
             if results is None:
                 results = []
                 for tc in tool_calls:
+                    if self._interrupted():
+                        results.append(("Interrupted by user", True))
+                        continue
                     try:
                         results.append(self._execute(tc))
                     except KeyboardInterrupt:
@@ -171,6 +189,8 @@ class Agent:
                 c = content["blocks"] if isinstance(content, dict) else content
                 self.session.add(tool_message(tc.get("id") or "", tc.get("name") or "",
                                               c, is_error))
+            if self._interrupted():
+                raise Interrupted()   # 所有工具结果已回填，会话状态一致
         self.ui.warn(f"已达单轮工具调用上限（{self.max_iterations} 次迭代）。")
         return ""
 
@@ -186,11 +206,15 @@ class Agent:
         renderer = StreamRenderer(self.ui.stream_text)
         msg = None
         usage = None
+        partial: list = []   # 已流出的正文，用于中断时保留部分回复
         try:
             for ev in stream:
+                if self._interrupted():
+                    break
                 t = ev["type"]
                 if t == "text_delta":
                     spinner.stop()
+                    partial.append(ev["text"])
                     renderer.feed(ev["text"])
                 elif t == "reasoning_delta":
                     spinner.stop()
@@ -212,6 +236,12 @@ class Agent:
                 close()
         self.ui.newline()
         if msg is None:
+            if self._interrupted():
+                text = "".join(partial).strip()
+                if text:   # 保留已流出的部分回复（与 Claude Code 行为一致）
+                    return {"role": "assistant",
+                            "content": text + "\n\n（回复被用户中断）"}, None
+                raise Interrupted()
             raise RuntimeError("LLM stream ended without a finish event")
         return msg, usage
 
@@ -258,6 +288,8 @@ class Agent:
     def _try_parallel(self, tool_calls):
         """Run a batch of read-only tool calls concurrently. Returns a list of
         (content, is_error) in call order, or None when the batch isn't eligible."""
+        if self._interrupted():
+            return None   # 顺序路径会把每个调用统一标记为已中断
         planned = []
         for tc in tool_calls:
             tool = self.registry.get(tc.get("name") or "")

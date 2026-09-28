@@ -2,14 +2,15 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.13.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 248 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.14.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 264 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
-- **多轮自主任务**：给它一句话，它自己读代码 → 改代码 → 跑测试 → 汇报结果；流式输出、思考过程可视化、每回合可中断
+- **多轮自主任务**：给它一句话，它自己读代码 → 改代码 → 跑测试 → 汇报结果；流式输出、思考过程可视化、**Esc 随时中断**（已生成的部分回复保留）
+- **回合中排队**：智能体工作时直接输入下一句话并回车，回合结束自动接着执行——不用干等
 - **并行多子智能体**：`dispatch_agents` 一次分派 2-6 个独立调研任务并行执行，单任务失败不影响其他；配合自定义子智能体（.minicode/agents/*.md）按角色分工
-- **浏览器 Web 界面**：`minicode --ui` 一条命令在浏览器里获得桌面级体验——JOB TICKET 工单设计语言（明暗双主题）、回合编号与状态戳、工具调用执行日志、深度思考折叠面板、权限签核按钮、分页签扩展管理（仍是零依赖：标准库 HTTP 服务 + 原生前端，无 Node/构建链）
-- **21 个内置工具**：文件读写编辑、多文件补丁（apply_patch）、Jupyter 编辑、glob/grep/list 搜索、bash（含后台进程管理）、单/并行事智能体（dispatch_agents 一次分派 2-6 个任务）、三视角圆桌、网页抓取/搜索、交互提问、任务清单
+- **浏览器 Web 界面**：`minicode --ui` 一条命令在浏览器里获得桌面级体验——JOB TICKET 工单设计语言（明暗双主题）、回合编号与状态戳、工具调用执行日志、深度思考折叠面板、权限签核按钮、停止按钮、分页签扩展管理（仍是零依赖：标准库 HTTP 服务 + 原生前端，无 Node/构建链）
+- **21 个内置工具**：文件读写编辑（先读后改硬性强制）、多文件补丁（apply_patch）、Jupyter 编辑、glob/grep/list 搜索、bash（含后台进程管理）、单/并行事智能体（dispatch_agents 一次分派 2-6 个任务）、三视角圆桌、网页抓取/搜索、交互提问、任务清单
 - **四种权限模式**：`default`（写操作逐个确认）→ `accept-edits`（自动接受编辑）→ `plan`（只读调研出计划，批准后实施）→ `full-access`（全自动，仅高危操作需确认）
 - **跨会话记忆**：项目大脑自动沉淀事实/坑/决策/失败教训，失败回合自动复盘入脑，越用越懂你的项目
 - **自检门禁**：`/verify pytest -q` 后每次改动自动跑验收命令，失败自动修复（最多两轮）
@@ -92,7 +93,7 @@ minicode -p "总结项目" --output-format json < task.txt   # headless
 | 终端命令平移 | 输入框直接用 `/命令`（27 条）与 `!命令` 直通；/init /commit /pr 自动转回合；计划一键批准实施 |
 | 状态栏 | IDE 式底部栏：连接态、权限模式切换、token 用量实时显示 |
 
-安全边界与 `serve` 模式相同：仅绑定 127.0.0.1、进程内随机 token 注入页面、Host 校验防 DNS rebinding；不要暴露公网。
+安全边界与 `serve` 模式相同：仅绑定 127.0.0.1、HttpOnly cookie 鉴权（首访经 `?token=` 链接种下，SameSite=Strict 防 CSRF）、Host 校验防 DNS rebinding、页面与静态资源零凭据；不要暴露公网。
 
 ### 常用服务商
 
@@ -111,6 +112,9 @@ minicode -p "总结项目" --output-format json < task.txt   # headless
 
 | 操作 | 说明 |
 |---|---|
+| `Esc` | 回合执行中按 Esc 立即中断（已流出的部分回复保留）；输入中按 Esc 清空当前行 |
+| 回合中直接输入 | 智能体工作时输入消息并回车即排队，回合结束自动逐条执行（支持 `/命令` 与 `!直通`） |
+| 粘贴多行 | bracketed paste：整段粘贴为一个输入，不再逐行误触发回合 |
 | `!cmd` | 命令直通本地执行，不经过模型 |
 | `@文件` | 把文件内容/图片附加给模型 |
 | `/yolo` `/plan` `/edits` | 一键切模式 |
@@ -119,6 +123,8 @@ minicode -p "总结项目" --output-format json < task.txt   # headless
 | `/copy` | 复制上条回复到剪贴板 |
 | `think / ultrathink` | 提示词含关键词自动加大思考预算 |
 | 行尾 `\` | 多行续写 |
+
+> Windows 下无 pyreadline3 也没关系：内置自研行编辑器（历史导航、Tab 补全、多行粘贴、CJK 光标），输入历史落盘 `~/.minicode/history` 跨会话保留。
 
 ### 斜杠命令
 
@@ -129,8 +135,6 @@ minicode -p "总结项目" --output-format json < task.txt   # headless
 - 技能：`.minicode/skills/<名字>/SKILL.md`（模型按需加载的工作流）
 - 命令：`.minicode/commands/<名字>.md`（`$ARGUMENTS` 接参）
 - 子智能体：`.minicode/agents/<名字>.md`（可指定 tools/model）
-- 工具插件：`.minicode/tools/<名字>.py`（函数签名即 schema）
-
 - 工具插件：`.minicode/tools/<名字>.py`（函数签名即 schema）
 
 ### 诊断
@@ -159,7 +163,9 @@ minicode/
 ├── webui.py        Web 界面（SSE 事件流 + 浏览器内确认）
 ├── web/            前端静态资源（原生 HTML/CSS/JS，零构建）
 ├── ui.py           终端渲染 / 余量条 / 确认框
-├── lineinput.py    Tab 补全（readline）
+├── lineinput.py    行编辑（readline / Windows 原生编辑器 + 历史落盘）
+├── winedit.py      Windows 行编辑器（msvcrt，零依赖）
+├── watcher.py      回合键盘监听（Esc 中断 / 消息排队）
 ├── fake.py         离线假模型
 └── tools/          21 个工具实现
 ```
@@ -167,7 +173,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 248 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 264 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

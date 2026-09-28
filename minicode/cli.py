@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .agent import MODES, Agent
+from .agent import MODES, Agent, Interrupted
 from .checkpoints import CheckpointManager, prune_checkpoint_roots
 from .config import apply_restricted_config, load_config
 from .llm import LLMError, make_provider
@@ -351,7 +351,7 @@ def _run_turn(agent: Agent, text: str) -> str:
     except LLMError as e:
         agent.ui.error(str(e))
         status = "error"
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, Interrupted):
         agent.ui.warn("已中断。")
         status = "interrupted"
     except Exception as e:  # keep the REPL alive on unexpected errors
@@ -431,7 +431,8 @@ def _postmortem(agent: Agent, status: str) -> None:
             fails.append("模型调用异常（网络/限速/兼容）")
         if status == "blocked":
             fails.append("提示词被 user_prompt_submit hook 拦截")
-        if not (status != "ok" or len(fails) >= 2):
+        # Esc 主动中断不算失败，仅当工具错误较多时才复盘
+        if not (status in ("error", "blocked") or len(fails) >= 2):
             return
         summary = "；".join(fails[:3])[:280]
         from .tools.memory import append_brain
@@ -1247,9 +1248,9 @@ def main(argv=None) -> int:
     if args.ui:
         from .webui import WebUIServer
         srv = WebUIServer(cfg, provider, mcp_manager=mcp_manager, port=args.port)
-        url = f"http://127.0.0.1:{srv.port}"
+        url = f"http://127.0.0.1:{srv.port}/?token={srv.token}"
         ui.plain(f"  ⚡ minicode web ui → {url}")
-        ui.plain(gray(f"  token: {srv.token}"))
+        ui.plain(gray("  首次访问经链接携带 token，之后凭 HttpOnly cookie 鉴权"))
         ui.plain(gray("  浏览器即将自动打开；Ctrl+C 停止"))
         import threading as _threading
         import webbrowser
@@ -1366,15 +1367,36 @@ def main(argv=None) -> int:
             ui.rule()
             continue
         turn_no += 1
-        _run_turn(agent, _expand_mentions(line, agent))
-        if agent.config.mode == "plan":
-            _plan_gate(agent, ui)
+        _run_turn_queued(agent, ui, line, cwd, plan_gate=True)
         ui.rule(f"回合 {turn_no} 完成")
-
     _save(agent)
     mcp_manager.stop_all()
     ui.plain(gray("再见。"))
     return 0
+
+
+def _run_turn_queued(agent: Agent, ui: UI, text: str, cwd,
+                     plan_gate: bool = False) -> None:
+    """运行一个回合，期间监听键盘：Esc 中断；输入的消息排队并逐条续跑。"""
+    from .watcher import TurnWatcher
+    with TurnWatcher(agent.interrupt_event, ui) as watcher:
+        _run_turn(agent, _expand_mentions(text, agent))
+        if plan_gate and agent.config.mode == "plan":
+            _plan_gate(agent, ui)
+        while True:
+            queued = watcher.drain()
+            if not queued:
+                break
+            nxt = queued.pop(0)
+            if nxt.startswith("/"):
+                if not _command(nxt, agent, ui, cwd):
+                    return
+                continue
+            if nxt.startswith("!"):
+                _shell_passthrough(agent, ui, nxt[1:].strip())
+                continue
+            ui.rule("排队消息")
+            _run_turn(agent, _expand_mentions(nxt, agent))
 
 
 def ui_colored():

@@ -144,16 +144,25 @@ def test_webui_serves_static_and_requires_token(tmp_path):
     srv = make_server(tmp_path, [])
     with Running(srv):
         base = f"http://127.0.0.1:{srv.port}"
-        html = get(base, "/").read().decode("utf-8")
-        assert "minicode" in html
-        assert "v__VERSION__" not in html              # 版本号已注入
-        js = get(base, "/app.js").read().decode("utf-8")
-        assert srv.token in js and "__TOKEN__" not in js  # token 注入到 app.js
-        health = json.load(get(base, "/api/health"))
-        assert health["ok"] and health["mode"] == "web"
+        # 未携带 token：静态资源与 API 一律 401（不泄露任何内容）
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            get(base, "/app.js")
+        assert ei.value.code == 401
         with pytest.raises(urllib.error.HTTPError) as ei:
             get(base, "/api/status")
-        assert ei.value.code == 401                      # 无 token 拒绝
+        assert ei.value.code == 401
+        # token 走 query → 200 并种下 HttpOnly cookie
+        resp = get(base, f"/?token={srv.token}")
+        html = resp.read().decode("utf-8")
+        assert "minicode" in html
+        assert "v__VERSION__" not in html               # 版本号已注入
+        assert srv.token not in html                    # 页面本身不包含 token
+        cookie = resp.headers.get("Set-Cookie") or ""
+        assert "minicode_token=" in cookie and "HttpOnly" in cookie
+        js = get(base, "/app.js", token=srv.token).read().decode("utf-8")
+        assert srv.token not in js and "__TOKEN__" not in js  # 静态资源零凭据
+        health = json.load(get(base, "/api/health"))
+        assert health["ok"] and health["mode"] == "web"
         s = json.load(get(base, "/api/status", token=srv.token))
         assert s["model"] == "fake" and s["busy"] is False
 

@@ -19,7 +19,8 @@ from __future__ import annotations
 import difflib
 
 from .base import Tool, ToolContext, ToolError
-from .fs import (_resolve, _read_text_normalized, _write_text_nl)
+from .fs import (_note_read, _require_read, _resolve, _read_text_normalized,
+                 _write_text_nl)
 
 
 def _parse_patch(patch: str) -> list:
@@ -112,7 +113,9 @@ class ApplyPatchTool(Tool):
                    "Format: '*** Begin Patch' ... sections '*** Add File: <path>' "
                    "('+' lines), '*** Update File: <path>' with hunks of ' ' context / "
                    "'-' removed / '+' added lines, '*** Delete File: <path>', "
-                   "'*** End Patch'. Update hunks must match exactly and uniquely.")
+                   "'*** End Patch'. Update hunks must match exactly and uniquely; "
+                   "Update/Delete sections require reading the target with read_file "
+                   "first (read-before-edit is enforced).")
     input_schema = {
         "type": "object",
         "properties": {
@@ -158,6 +161,10 @@ class ApplyPatchTool(Tool):
                 raise ToolError(f"{o['path']}: already exists (use Update File)")
             if o["action"] in ("update", "delete") and not p.exists():
                 raise ToolError(f"{o['path']}: not found")
+            if o["action"] == "update":   # 硬性 read-before-edit（与 edit_file 一致）
+                _require_read(ctx, p, "apply_patch update")
+            elif o["action"] == "delete":
+                _require_read(ctx, p, "apply_patch delete")
 
         # pre-read every updated file so all hunks validate against originals
         # (CRLF normalized for matching; original style restored on write)
@@ -173,13 +180,19 @@ class ApplyPatchTool(Tool):
             if o["action"] == "add":
                 p.parent.mkdir(parents=True, exist_ok=True)
                 _write_text_nl(p, "\n".join(o["lines"]) + ("\n" if o["lines"] else ""))
+                _note_read(ctx, p)
                 summary.append(f"added {o['path']} ({len(o['lines'])} lines)")
             elif o["action"] == "delete":
                 p.unlink()
+                try:
+                    ctx.session.file_mtimes.pop(str(p), None)
+                except (AttributeError, KeyError):
+                    pass
                 summary.append(f"deleted {o['path']}")
             else:
                 updated = _apply_update(originals[p], o["hunks"], o["path"])
                 _write_text_nl(p, updated, newlines.get(p, "\n"))
+                _note_read(ctx, p)
                 added = sum(len(n) - len(ol) for ol, n in o["hunks"])
                 diff = list(difflib.unified_diff(originals[p].splitlines(),
                                                  updated.splitlines(), lineterm=""))

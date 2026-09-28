@@ -116,6 +116,8 @@ def test_checkpoint_undo_modify(tmp_path):
     p.write_text("v1", encoding="utf-8")
     mgr = CheckpointManager(tmp_path / "ck")
     mgr.snapshot(p, "write_file")
+    from minicode.tools.fs import ReadFileTool
+    ReadFileTool().run({"path": "f.txt"}, ctx)   # read-before-edit
     WriteFileTool().run({"path": "f.txt", "content": "v2"}, ctx)
     assert p.read_text() == "v2"
     e = mgr.undo()

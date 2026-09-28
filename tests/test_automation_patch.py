@@ -44,6 +44,8 @@ def test_apply_patch_multi_operations(tmp_path):
     ctx = ToolContext(cwd=tmp_path, config=Config(), session=Session(), ui=UI())
     (tmp_path / "a.py").write_text("x = 1\nold value\ny = 2\n", encoding="utf-8")
     (tmp_path / "c.txt").write_text("bye\n", encoding="utf-8")
+    ReadFileTool().run({"path": "a.py"}, ctx)    # read-before-edit 硬性要求
+    ReadFileTool().run({"path": "c.txt"}, ctx)
     r = ApplyPatchTool().run({"patch": PATCH}, ctx)
     assert "added sub/b.py" in r and "deleted c.txt" in r and "updated a.py" in r
     assert (tmp_path / "a.py").read_text() == "x = 1\nnew value\ny = 2\n"
@@ -54,6 +56,7 @@ def test_apply_patch_multi_operations(tmp_path):
 def test_apply_patch_validates_before_touching(tmp_path):
     ctx = ToolContext(cwd=tmp_path, config=Config(), session=Session(), ui=UI())
     (tmp_path / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+    ReadFileTool().run({"path": "a.py"}, ctx)    # read-before-edit
     bad = ("*** Begin Patch\n*** Update File: a.py\n-nothing-matches\n+nope\n"
            "*** Delete File: ghost.txt\n*** End Patch")
     with pytest.raises(ToolError, match="not found"):
@@ -64,6 +67,7 @@ def test_apply_patch_validates_before_touching(tmp_path):
 def test_apply_patch_ambiguous_context(tmp_path):
     ctx = ToolContext(cwd=tmp_path, config=Config(), session=Session(), ui=UI())
     (tmp_path / "d.py").write_text("same\nsame\n", encoding="utf-8")
+    ReadFileTool().run({"path": "d.py"}, ctx)    # read-before-edit
     p = "*** Begin Patch\n*** Update File: d.py\n-same\n+other\n*** End Patch"
     with pytest.raises(ToolError, match="2 locations"):
         ApplyPatchTool().run({"patch": p}, ctx)
@@ -78,6 +82,10 @@ def test_apply_patch_checkpoints_all_files(tmp_path):
     (tmp_path / "a.py").write_text("old value\n", encoding="utf-8")
     (tmp_path / "c.txt").write_text("bye\n", encoding="utf-8")
     agent = make_agent(tmp_path, FakeProvider([
+        {"tool_calls": [{"id": "r1", "name": "read_file",
+                         "args": json.dumps({"path": "a.py"})},
+                        {"id": "r2", "name": "read_file",
+                         "args": json.dumps({"path": "c.txt"})}]},
         {"tool_calls": [{"id": "t", "name": "apply_patch",
                          "args": json.dumps({"patch": PATCH})}]},
         {"text": "patched"},
