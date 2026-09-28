@@ -38,6 +38,9 @@ from typing import Iterator, List, Optional, Tuple
 RETRYABLE_CODES = {429, 500, 502, 503, 529}
 RETRY_DELAYS = (2, 5, 15, 30)
 
+# reasoning_effort 档位对应的近似思考预算（用于关键词→档位换算）
+_EFFORT_TOKENS = {"low": 4000, "medium": 10000, "high": 31999}
+
 TOOL_UNSUPPORTED_PATTERNS = [
     "tools is not supported", "tool is not supported", "tools parameter",
     "function calling", "tools are not", "tool use is not",
@@ -379,8 +382,12 @@ class OpenAIProvider(Provider):
                 for t in tools]
         if self.max_tokens:
             body["max_tokens"] = int(self.max_tokens)
-        if self.reasoning_effort:
-            body["reasoning_effort"] = self.reasoning_effort
+        effort = self.reasoning_effort
+        if thinking and thinking > _EFFORT_TOKENS.get(effort or "", 0):
+            # think/ultrathink 关键词在 OpenAI 兼容端落到 reasoning_effort
+            effort = "high" if thinking >= 10000 else "medium"
+        if effort:
+            body["reasoning_effort"] = effort
         body.update(self.extra_body)
         return body
 
@@ -522,6 +529,10 @@ class OpenAIProvider(Provider):
         if usage:
             usage_n = {"input": int(usage.get("prompt_tokens") or 0),
                        "output": int(usage.get("completion_tokens") or 0)}
+            cached = int(((usage.get("prompt_tokens_details") or {})
+                          .get("cached_tokens")) or 0)
+            if cached:
+                usage_n["cache_read"] = cached
         if yielded is not None:
             yielded[0] = True
         yield {"type": "finish", "stop_reason": stop, "usage": usage_n,
@@ -551,6 +562,10 @@ class OpenAIProvider(Provider):
         if isinstance(usage, dict):
             usage_n = {"input": int(usage.get("prompt_tokens") or 0),
                        "output": int(usage.get("completion_tokens") or 0)}
+            cached = int(((usage.get("prompt_tokens_details") or {})
+                          .get("cached_tokens")) or 0)
+            if cached:
+                usage_n["cache_read"] = cached
         yield {"type": "finish", "stop_reason": ch.get("finish_reason"),
                "usage": usage_n,
                "message": assistant_message(content or None, tool_calls, reasoning=rc)}
@@ -596,16 +611,76 @@ class AnthropicProvider(Provider):
         return body
 
     def stream(self, messages, tools, system, thinking: int = 0):
+        """带请求体自适应的流式调用（与 OpenAI 路径同一套鲁棒性语义）：
+        thinking / tools / cache_control 被端点拒绝时逐级降级；流式不可用
+        自动回退非流式。已产出事件后绝不重放。"""
         body = self._build_body(messages, tools, system, thinking)
-        resp = _post_stream(self._url(), self._headers(), body, self.timeout)
-        try:
-            yield from self._iter_stream(resp)
-        finally:
-            resp.close()
+        use_stream = True
+        yielded = [False]
+        while True:
+            current = dict(body)
+            current["stream"] = use_stream
+            try:
+                if use_stream:
+                    resp = _post_stream(self._url(), self._headers(), current,
+                                        self.timeout)
+                    try:
+                        yield from self._iter_stream(resp, yielded)
+                        return
+                    finally:
+                        resp.close()
+                else:
+                    data = _post_json(self._url(), self._headers(), current,
+                                      self.timeout)
+                    yield from self._events_from_json(data)
+                    return
+            except LLMError as e:
+                if yielded[0]:
+                    raise   # 部分输出已流出——绝不重放
+                msg = str(e)
+                low = msg.lower()
+                if "thinking" in low and body.get("thinking"):
+                    body.pop("thinking", None)
+                    continue
+                if _looks_like_tools_unsupported(low) and body.get("tools"):
+                    raise ToolUnsupportedError(msg) from None
+                if ("cache_control" in low or "ephemeral" in low) and \
+                        self._has_cache_control(body):
+                    body = self._strip_cache_control(body)
+                    continue
+                if use_stream and ("stream" in low or "event-stream" in low
+                                   or "empty stream" in low):
+                    use_stream = False
+                    continue
+                raise
 
-    def _iter_stream(self, resp) -> Iterator[dict]:
+    @staticmethod
+    def _has_cache_control(body: dict) -> bool:
+        def scan(obj) -> bool:
+            if isinstance(obj, dict):
+                if "cache_control" in obj:
+                    return True
+                return any(scan(v) for v in obj.values())
+            if isinstance(obj, list):
+                return any(scan(v) for v in obj)
+            return False
+        return scan(body)
+
+    @staticmethod
+    def _strip_cache_control(body: dict) -> dict:
+        def clean(obj):
+            if isinstance(obj, dict):
+                return {k: clean(v) for k, v in obj.items() if k != "cache_control"}
+            if isinstance(obj, list):
+                return [clean(v) for v in obj]
+            return obj
+        return {k: clean(v) for k, v in body.items()}
+
+    def _iter_stream(self, resp, yielded: Optional[list] = None) -> Iterator[dict]:
         blocks: dict = {}
         usage_in = 0
+        cache_read = 0
+        cache_create = 0
         usage_out = 0
         stop = None
         for payload in _sse_data(resp):
@@ -616,7 +691,10 @@ class AnthropicProvider(Provider):
             t = ev.get("type")
             if t == "message_start":
                 u = (ev.get("message") or {}).get("usage") or {}
-                usage_in = int(u.get("input_tokens") or 0)
+                cache_read = int(u.get("cache_read_input_tokens") or 0)
+                cache_create = int(u.get("cache_creation_input_tokens") or 0)
+                usage_in = (int(u.get("input_tokens") or 0)
+                            + cache_read + cache_create)
             elif t == "content_block_start":
                 cb = ev.get("content_block") or {}
                 idx = ev.get("index", 0)
@@ -624,6 +702,8 @@ class AnthropicProvider(Provider):
                 if ctype == "tool_use":
                     blocks[idx] = {"type": "tool_use", "id": cb.get("id", ""),
                                    "name": cb.get("name", ""), "args": ""}
+                    if yielded is not None:
+                        yielded[0] = True
                     yield {"type": "tool_call", "index": idx,
                            "id": cb.get("id", ""), "name": cb.get("name", "")}
                 elif ctype == "thinking":
@@ -637,10 +717,14 @@ class AnthropicProvider(Provider):
                 if dtype == "text_delta":
                     b = blocks.setdefault(idx, {"type": "text", "text": ""})
                     b["text"] = b.get("text", "") + d.get("text", "")
+                    if yielded is not None:
+                        yielded[0] = True
                     yield {"type": "text_delta", "text": d.get("text", "")}
                 elif dtype == "thinking_delta":
                     b = blocks.setdefault(idx, {"type": "thinking", "thinking": "", "signature": ""})
                     b["thinking"] += d.get("thinking", "")
+                    if yielded is not None:
+                        yielded[0] = True
                     yield {"type": "reasoning_delta", "text": d.get("thinking", "")}
                 elif dtype == "signature_delta":
                     b = blocks.setdefault(idx, {"type": "thinking", "thinking": "", "signature": ""})
@@ -648,6 +732,8 @@ class AnthropicProvider(Provider):
                 elif dtype == "input_json_delta":
                     b = blocks.setdefault(idx, {"type": "tool_use", "id": "", "name": "", "args": ""})
                     b["args"] = b.get("args", "") + d.get("partial_json", "")
+                    if yielded is not None:
+                        yielded[0] = True
                     yield {"type": "tool_call_delta", "index": idx,
                            "args_delta": d.get("partial_json", "")}
             elif t == "message_delta":
@@ -657,6 +743,50 @@ class AnthropicProvider(Provider):
             elif t == "error":
                 err = ev.get("error") or {}
                 raise LLMError(f"stream error: {err.get('type')}: {err.get('message')}")
+        usage = {"input": usage_in, "output": usage_out}
+        if cache_read:
+            usage["cache_read"] = cache_read
+        if cache_create:
+            usage["cache_creation"] = cache_create
+        yield from self._finish_events(blocks, stop, usage)
+
+    def _events_from_json(self, data: dict) -> Iterator[dict]:
+        """非流式回退：与流式同一套事件语义（UI 仍能看到逐步输出）。"""
+        blocks: dict = {}
+        for i, b in enumerate(data.get("content") or []):
+            bt = b.get("type")
+            if bt == "text":
+                blocks[i] = {"type": "text", "text": b.get("text", "")}
+                if b.get("text"):
+                    yield {"type": "text_delta", "text": b["text"]}
+            elif bt == "thinking":
+                blocks[i] = {"type": "thinking", "thinking": b.get("thinking", ""),
+                             "signature": b.get("signature", "")}
+                if b.get("thinking"):
+                    yield {"type": "reasoning_delta", "text": b["thinking"]}
+            elif bt == "tool_use":
+                try:
+                    args = json.dumps(b.get("input") or {}, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    args = "{}"
+                blocks[i] = {"type": "tool_use", "id": b.get("id", ""),
+                             "name": b.get("name", ""), "args": args}
+                yield {"type": "tool_call", "index": i,
+                       "id": b.get("id", ""), "name": b.get("name", "")}
+                yield {"type": "tool_call_delta", "index": i, "args_delta": args}
+        u = data.get("usage") or {}
+        cache_read = int(u.get("cache_read_input_tokens") or 0)
+        cache_create = int(u.get("cache_creation_input_tokens") or 0)
+        usage = {"input": (int(u.get("input_tokens") or 0) + cache_read + cache_create),
+                 "output": int(u.get("output_tokens") or 0)}
+        if cache_read:
+            usage["cache_read"] = cache_read
+        if cache_create:
+            usage["cache_creation"] = cache_create
+        yield from self._finish_events(blocks, data.get("stop_reason"), usage)
+
+    @staticmethod
+    def _finish_events(blocks: dict, stop, usage) -> Iterator[dict]:
         text_parts: List[str] = []
         tool_calls: List[dict] = []
         thinking_blocks: List[dict] = []
@@ -669,8 +799,7 @@ class AnthropicProvider(Provider):
             elif b["type"] == "thinking" and b.get("thinking"):
                 thinking_blocks.append({"thinking": b["thinking"],
                                         "signature": b.get("signature", "")})
-        yield {"type": "finish", "stop_reason": stop,
-               "usage": {"input": usage_in, "output": usage_out},
+        yield {"type": "finish", "stop_reason": stop, "usage": usage,
                "message": assistant_message("".join(text_parts) or None, tool_calls,
                                             thinking_blocks)}
 

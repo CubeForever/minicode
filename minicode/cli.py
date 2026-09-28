@@ -257,27 +257,29 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     def factory(prompt: str, subagent_type: str = None) -> str:
         sub_ui = SubUI(ui)
         sub_session = Session()
+        # 每个子代理独立 ShellState：并行分派时互不竞争 cwd/env/后台进程
+        sub_shell = ShellState(cfg.cwd, detect_shell(cfg.shell))
         defn = agents.get((subagent_type or "").lower())
         if defn is not None:
             sub_provider = provider
             if defn.get("model"):
                 sub_provider = make_provider(dataclasses.replace(cfg,
                                                                  model=defn["model"]))
-            all_tools = build_registry(shell_state)
+            all_tools = build_registry(sub_shell)
             allowed = {t.strip().lower().replace("_", "")
                        for t in (defn.get("tools") or "").split(",") if t.strip()}
             if allowed:
                 picked = [t for t in all_tools.tools.values()
                           if t.name.lower().replace("_", "") in allowed]
-                tools = picked or list(build_registry(shell_state,
+                tools = picked or list(build_registry(sub_shell,
                                                       read_only=True).tools.values())
             else:
-                tools = list(build_registry(shell_state, read_only=True).tools.values())
+                tools = list(build_registry(sub_shell, read_only=True).tools.values())
             sub_registry = ToolRegistry(tools)
             sub_system = defn["prompt"] or SUBAGENT_PROMPT.format(cwd=cfg.cwd)
         else:
             sub_provider = provider
-            sub_registry = build_registry(shell_state, read_only=True)
+            sub_registry = build_registry(sub_shell, read_only=True)
             sub_system = SUBAGENT_PROMPT.format(cwd=cfg.cwd)
         sub = Agent(sub_provider, sub_session, sub_ui, cfg, sub_registry,
                     max_iterations=15)
@@ -319,7 +321,8 @@ def _after_turn(agent: Agent) -> None:
     if cfg.context_limit and ctx_tokens > 0:
         pct = ctx_tokens / cfg.context_limit * 100
         ui.token_note(s.total_usage["input"] or s.approx_tokens(),
-                      s.total_usage["output"], pct)
+                      s.total_usage["output"], pct,
+                      cache_read=s.total_usage.get("cache_read", 0))
     if s.todos:
         done = sum(1 for t in s.todos if t.get("status") == "completed")
         pending = len(s.todos) - done
@@ -945,7 +948,10 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                    if agent.config.reasoning_effort else ""))
     elif name == "/cost":
         t = agent.session.total_usage
-        ui.plain(f"  累计 tokens：in {t['input']:,} · out {t['output']:,}（费用按服务商定价）")
+        cached = t.get("cache_read") or 0
+        extra = f" · 缓存命中 {cached:,}" if cached else ""
+        ui.plain(f"  累计 tokens：in {t['input']:,} · out {t['output']:,}{extra}"
+                 "（费用按服务商定价）")
     elif name == "/context":
         s = agent.session
         ui.plain(f"  系统提示 ~{len(agent.system_prompt) // 3:,} tok")

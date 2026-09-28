@@ -11,8 +11,9 @@ from __future__ import annotations
 import os
 import re
 import sys
-import unicodedata
 from pathlib import Path
+
+from .ui import _disp_width as _disp_width  # re-export：winedit 经此引用，与 UI 共用实现
 
 try:
     import readline  # noqa
@@ -28,14 +29,6 @@ _HISTORY_LIMIT = 500
 _BRACKETED_PASTE_OK = None if HAS_READLINE else False
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _disp_width(s: str) -> int:
-    """终端显示宽度（CJK 全角计 2）。"""
-    w = 0
-    for ch in s:
-        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-    return w
 
 
 def _load_history_lines() -> list:

@@ -1,11 +1,14 @@
-"""Shell tools: foreground bash with persistent cwd, plus background shells
-(run_in_background / bash_output / bash_kill), on bash / powershell / cmd."""
+"""Shell tools: foreground bash with persistent cwd AND persistent environment
+(exports/venv activation survive across calls via env snapshots), plus
+background shells (run_in_background / bash_output / bash_kill), on
+bash / powershell / cmd."""
 from __future__ import annotations
 
 import atexit
 import codecs
 import locale
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -16,6 +19,11 @@ from typing import Dict, Optional
 from .base import Tool, ToolContext, ToolError, truncate_middle
 
 MARKER = "__MCC_PWD__"
+ENV_MARKER = "__MCC_ENV__"
+
+# 每条命令都会被 bash 自身改写的变量——不纳入持久化差分
+_ENV_NOISE = {"PWD", "OLDPWD", "SHLVL", "_", "PS1"}
+_ENV_KEY_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def find_bash_exe() -> Optional[str]:
@@ -86,17 +94,102 @@ def _decode(b: bytes) -> str:
 
 
 class ShellState:
-    """Persistent cwd + shell choice + background shells across tool calls."""
+    """Persistent cwd + shell choice + persistent environment + background
+    shells across tool calls.
+
+    环境持久化（仅 bash）：ShellState 创建时抓取一次环境基线；此后每条命令
+    执行完附加 `env -0` 转储，与基线做差分得到 overrides/unsets；下一条命令
+    前以 `export K=V;` 前缀重放——`export`、`source activate`、`unset` 从此
+    跨调用存活（与 cwd 持久化同一套机制）。powershell/cmd 不做差分。
+    """
 
     def __init__(self, cwd: Path, shell: str):
         self.cwd = Path(cwd)
         self.shell = shell
         self.background: Dict[str, "BackgroundShell"] = {}
         self._bg_counter = 0
+        self._env_baseline: Optional[dict] = None
+        self._env_overrides: Dict[str, str] = {}
+        self._env_unsets: set = set()
+        if shell == "bash":
+            self._capture_env_baseline()
 
     def next_id(self) -> str:
         self._bg_counter += 1
         return f"bash_{self._bg_counter}"
+
+    # ---------- persistent environment ----------
+    def _capture_env_baseline(self):
+        try:
+            import base64
+            bash = find_bash_exe() or "bash"
+            # 与命令尾的转储同一条 base64 管道：env -0 的 NUL 字节若直接进入
+            # 解码链会被 _decode 误判成 UTF-16
+            proc = subprocess.run([bash, "-c", "env -0 | base64 -w0"],
+                                  cwd=str(self.cwd), capture_output=True,
+                                  timeout=10, env=dict(os.environ))
+            raw = base64.b64decode(_decode(proc.stdout or b"").strip())
+            self._env_baseline = self._parse_env(raw.decode("utf-8",
+                                                            errors="replace"))
+        except Exception:
+            self._env_baseline = None   # 环境持久化不可用，静默降级
+
+    @staticmethod
+    def _parse_env(dump: str) -> dict:
+        env = {}
+        for chunk in dump.split("\x00"):
+            if "=" not in chunk:
+                continue
+            k, _, v = chunk.partition("=")
+            if k and k not in _ENV_NOISE:
+                env[k] = v
+        return env
+
+    def update_env(self, dump: str):
+        """命令执行后的 env 转储（base64 编码的 `env -0` 输出）→ 差分更新
+        overrides/unsets。转储为空或解不开（env -0 / base64 不可用）时视为
+        不可信，直接跳过——绝不把「无转储」当成「全部变量被 unset」。"""
+        if self._env_baseline is None:
+            return
+        dump = (dump or "").strip()
+        if not dump:
+            return
+        import base64
+        try:
+            raw = base64.b64decode(dump, validate=True).decode("utf-8",
+                                                               errors="replace")
+        except Exception:
+            return
+        if "=" not in raw:
+            return
+        current = self._parse_env(raw)
+        overrides, unsets = {}, set()
+        for k in set(self._env_baseline) | set(current):
+            base_v = self._env_baseline.get(k)
+            cur_v = current.get(k)
+            if cur_v is None and base_v is not None:
+                unsets.add(k)
+            elif cur_v is not None and cur_v != base_v:
+                overrides[k] = cur_v
+        self._env_overrides, self._env_unsets = overrides, unsets
+
+    def env_export_prefix(self) -> str:
+        """下一条命令前的重放前缀（bash）。值逐个 base64 编码传输——导出
+        脚本里永远只有 [A-Za-z0-9+/=]，杜绝引号/$/反斜杠等值内容炸掉语法；
+        非法变量名（如 bash 导出的 BASH_FUNC_x%%）直接跳过。"""
+        if self._env_baseline is None:
+            return ""
+        import base64
+        parts = []
+        for k in sorted(self._env_unsets):
+            if _ENV_KEY_OK.match(k):
+                parts.append(f"unset {k};")
+        for k, v in sorted(self._env_overrides.items()):
+            if not _ENV_KEY_OK.match(k):
+                continue
+            enc = base64.b64encode(v.encode("utf-8", "surrogateescape")).decode("ascii")
+            parts.append(f"export {k}=$(printf %s '{enc}' | base64 -d);")
+        return " ".join(parts)
 
 
 class BackgroundShell:
@@ -119,6 +212,8 @@ class BackgroundShell:
         try:
             for raw in iter(self.proc.stdout.readline, b""):
                 line = _decode(raw)
+                if ENV_MARKER in line:
+                    break   # 尾部 env 转储是内部探针，不进入后台输出
                 if MARKER in line:  # internal cwd probe — not real output
                     continue
                 self._append(line)
@@ -164,10 +259,13 @@ class _BaseShellTool(Tool):
     def _argv(self, command: str) -> list:
         sh = self.state.shell
         if sh == "bash":
+            prefix = self.state.env_export_prefix()
             inner = '$(cygpath -m "$(pwd)" 2>/dev/null || pwd)'
-            script = (f"{command}\n"
+            script = (f"{prefix}{command}\n"
                       "__mcc_rc=$?\n"
                       f"printf '\\n{MARKER}%s' \"{inner}\"\n"
+                      f"printf '\\n{ENV_MARKER}'\n"
+                      "env -0 2>/dev/null | base64 -w0 2>/dev/null\n"
                       "exit $__mcc_rc")
             return [find_bash_exe() or "bash", "-c", script]
         if sh == "powershell":
@@ -207,6 +305,14 @@ class _BaseShellTool(Tool):
             if candidate.is_dir():
                 self.state.cwd = candidate
         return before + ("\n" + after if after else "")
+
+    def _split_env_dump(self, out: str) -> str:
+        """剥掉命令尾部的 env 转储并差分更新 ShellState（bash 路径专用）。"""
+        idx = out.rfind("\n" + ENV_MARKER)
+        if idx == -1:
+            return out
+        self.state.update_env(out[idx + len(ENV_MARKER) + 1:])
+        return out[:idx]
 
 
 class BashTool(_BaseShellTool):
@@ -260,7 +366,7 @@ class BashTool(_BaseShellTool):
             timed_out = True
             kill_process_tree(proc)
             out_bytes, _ = proc.communicate()
-        out = self._extract_cwd(_decode(out_bytes or b""))
+        out = self._extract_cwd(self._split_env_dump(_decode(out_bytes or b"")))
         if timed_out:
             body = truncate_middle(out.strip(), 8000) or "(no output)"
             return f"Error: command timed out after {timeout}s.\nPartial output:\n{body}"

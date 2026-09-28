@@ -159,8 +159,9 @@ class WebBridgeUI(UI):
         if msg:
             self._emit({"t": "plain", "text": _clean(msg)})
 
-    def token_note(self, in_tok, out_tok, pct=None):
-        self._emit({"t": "tokens", "in": in_tok, "out": out_tok, "pct": pct})
+    def token_note(self, in_tok, out_tok, pct=None, cache_read: int = 0):
+        self._emit({"t": "tokens", "in": in_tok, "out": out_tok, "pct": pct,
+                    "cache_read": cache_read})
 
     def todo_render(self, todos):
         self._emit({"t": "todos", "todos": list(todos or [])})
@@ -303,7 +304,8 @@ class WebUIServer:
                     s = outer.agent.session
                     return self._json(200, {
                         "model": outer.cfg.model,
-                        "provider": outer.cfg.provider,
+                        "provider": getattr(outer.agent.provider, "name",
+                                            outer.cfg.provider),
                         "mode": outer.cfg.mode,
                         "cwd": str(outer.cfg.cwd or ""),
                         "messages": len(s.messages),
@@ -764,7 +766,9 @@ class WebUIServer:
             return {"output": f"reasoning effort：{cfg.reasoning_effort or '默认'}"}
         if name == "cost":
             t = s.total_usage
-            return {"output": f"累计 tokens：in {t['input']:,} · out {t['output']:,}"}
+            cached = t.get("cache_read") or 0
+            extra = f" · 缓存命中 {cached:,}" if cached else ""
+            return {"output": f"累计 tokens：in {t['input']:,} · out {t['output']:,}{extra}"}
         if name == "context":
             by = {}
             for m in s.messages:

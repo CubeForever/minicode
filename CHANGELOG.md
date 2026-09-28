@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.15.0 (2026-09-28)
+
+呈现层与内核韧性（v0.15 主题：**终端渲染 + 持久 shell + Provider 对称性**）：
+
+**终端 Markdown 渲染（零依赖）**
+
+- StreamRenderer 升级为完整终端 Markdown：标题（#/## 加粗着色）、无序/有序列表（`•` 与 ✓/○ 任务框）、引用（`│` 前缀）、分隔线、行内 **粗体**/*斜体*/`代码`/~~删除线~~/[链接](url) 转 ANSI
+- GFM 表格：缓冲到表格结束后按显示宽度（CJK 全角计 2）对齐输出；过宽表格原样降级——宁可朴素不可错位
+- 流式语义不变：只对完整行渲染；无色模式（NO_COLOR/非 tty）下内容逐字保留；围栏代码永不 markdown 化
+
+**持久 shell 环境（bash）**
+
+- `export` / `source activate` / `unset` 从此跨调用存活，与 cwd 持久化同一机制：ShellState 创建时抓取环境基线，每条命令尾部附加 `env -0 | base64 -w0` 转储做差分，下一条命令前重放变化项
+- 转储与重放全链路 base64——导出脚本里永远只有 `[A-Za-z0-9+/=]`，值含引号/`$`/反斜杠/CJK 均无法破坏语法；`env -0` 的 NUL 字节绝不进入解码链（否则会被输出解码链误判成 UTF-16）
+- 非法变量名（如 bash 导出的 `BASH_FUNC_x%%`）自动跳过；转储为空视为不可信直接跳过，绝不把「无转储」误判为「全部 unset」；powershell/cmd 静默降级（仅 cwd 持久化）
+
+**Provider 对称性**
+
+- Anthropic 路径补齐 OpenAI 路径的鲁棒性语义：thinking / tools / cache_control 被端点拒绝时逐级降级重试，流式不可用自动回退非流式（新增非流式事件解析，与流式同一套事件语义）；已产出事件后绝不重放
+- 缓存 token 可见：OpenAI（`prompt_tokens_details.cached_tokens`）与 Anthropic（`cache_read/creation_input_tokens`）均解析；cache 计入上下文占用并单列展示（回合后 token 行与 /cost 显示「缓存命中」）
+- `think`/`ultrathink` 关键词在 OpenAI 兼容端落地为 `reasoning_effort`（不再是空操作）；显式档位仍然优先，关键词更强时升档
+
+**子智能体隔离与测试卫生**
+
+- 每个子代理独立 ShellState：并行 dispatch_agents 不再竞争 cwd/env/后台进程
+- SubUI 权限确认自动拒绝：子代理没有交互终端，不再从并行工作线程抢占 stdin
+- 新增 `tests/conftest.py` autouse 夹具：会话落盘重定向到临时目录，测试不再污染真实 `~/.minicode/sessions`
+- `/api/status` 的 provider 字段报告真实 provider 名（原先恒为配置值）
+
+测试 264 → **283 项**（新增 `tests/test_v015_terminal.py`：渲染器结构/表格 CJK 对齐/围栏保护、env 差分与真实 bash 往返、cache 解析、非流式事件、SubUI 非交互）。
+
+
 ## 0.14.0 (2026-09-28)
 
 手感层追平（v0.14 主题：**安全修复 + 中断/排队/粘贴**）——对齐 Claude Code 用户感知最强的日常交互：

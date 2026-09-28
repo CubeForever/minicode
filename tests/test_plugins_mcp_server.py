@@ -154,26 +154,43 @@ def server(tmp_path):
     srv.shutdown()
 
 
+def _with_retry(fn, tries=3):
+    """连接层抖动重试（Windows 全量跑时偶发 RemoteDisconnected/连接重置）。"""
+    import http.client
+    for attempt in range(tries):
+        try:
+            return fn()
+        except (http.client.RemoteDisconnected, ConnectionResetError,
+                ConnectionAbortedError):
+            if attempt == tries - 1:
+                raise
+            time.sleep(0.2)
+
+
 def _post(url, payload, token):
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(), method="POST",
-        headers={"Content-Type": "application/json",
-                 "X-Minicode-Token": token or ""})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode())
+    def once():
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(), method="POST",
+            headers={"Content-Type": "application/json",
+                     "X-Minicode-Token": token or ""})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode())
+    return _with_retry(once)
 
 
 def _get(url, token):
-    req = urllib.request.Request(url, method="GET",
-                                 headers={"X-Minicode-Token": token or ""})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode())
+    def once():
+        req = urllib.request.Request(url, method="GET",
+                                     headers={"X-Minicode-Token": token or ""})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode())
+    return _with_retry(once)
 
 
 def test_serve_health_and_auth(server):

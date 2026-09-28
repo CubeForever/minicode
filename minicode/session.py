@@ -79,6 +79,12 @@ class Session:
         self.last_usage = usage
         self.total_usage["input"] += usage.get("input") or 0
         self.total_usage["output"] += usage.get("output") or 0
+        if usage.get("cache_read"):
+            self.total_usage["cache_read"] = (self.total_usage.get("cache_read", 0)
+                                              + usage["cache_read"])
+        if usage.get("cache_creation"):
+            self.total_usage["cache_creation"] = (self.total_usage.get("cache_creation", 0)
+                                                  + usage["cache_creation"])
 
     def context_tokens(self) -> int:
         return (self.last_usage or {}).get("input") or self.approx_tokens()
