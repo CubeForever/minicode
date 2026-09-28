@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.15.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 283 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.16.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 294 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -76,8 +76,20 @@ minicode --ui                   # 浏览器 Web 界面（自动打开 http://127
 minicode "修复登录 bug"          # 启动即执行
 minicode -c                     # 恢复上次会话
 minicode --probe                # 实测端点四项能力（装新模型先跑这个）
+minicode --install <git仓库|目录>  # 安装扩展包（技能/命令/子智能体/插件）
 minicode -p "总结项目" --output-format json < task.txt   # headless
 ```
+
+### 扩展包分发（--install）
+
+把一个 git 仓库（或本地目录）作为「扩展包」一键装进项目 `.minicode/`（`--user` 装入 `~/.minicode/`）：
+
+```bash
+minicode --install https://github.com/someone/minicode-pack   # 装到当前项目
+minicode --install ./my-pack --user                           # 装到用户级
+```
+
+包内按约定目录发现：`skills/`（含 SKILL.md 的子目录）、`commands/*.md`、`agents/*.md`、`tools/*.py`；也可在包根放 `minicode.json` manifest 显式声明。安全边界与手工复制一致：安装只复制文件，插件首次加载强制确认，manifest 携带的 MCP 服务器不会自动安装。
 
 ### Web 界面（`--ui`）
 
@@ -174,7 +186,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 283 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 294 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

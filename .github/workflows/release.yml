@@ -1,0 +1,55 @@
+name: release
+
+# 推送 v* 标签 → 构建分发包 → 发布到 PyPI。
+# 发布走 PyPI Trusted Publishing（OIDC）：需在 PyPI 项目设置里把本仓库
+# （CubeForever/minicode，workflow: release，environment: pypi）登记为
+# 可信发布方，之后无需任何 API token。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Smoke test the wheel
+        run: |
+          python -m pip install dist/*.whl
+          minicode --version
+          python - <<'PY'
+          import os
+          os.environ["MINICODE_FAKE_LLM"] = "demo"
+          from minicode.fake import FakeProvider
+          p = FakeProvider.demo()
+          assert len(p.script) == 2
+          print("wheel smoke ok")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # PyPI Trusted Publishing：由 PyPI 侧校验仓库/工作流/environment 三元组
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

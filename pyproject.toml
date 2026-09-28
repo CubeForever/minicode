@@ -4,15 +4,38 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "minicode"
-version = "0.15.0"
+version = "0.16.0"
 description = "A Claude Code-style terminal coding agent — zero dependencies, works with OpenAI-compatible & Anthropic APIs."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "CubeForever" }]
+keywords = ["ai", "agent", "cli", "coding-agent", "terminal", "mcp", "llm", "claude-code"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
 dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/CubeForever/minicode"
+Repository = "https://github.com/CubeForever/minicode"
+Changelog = "https://github.com/CubeForever/minicode/blob/main/CHANGELOG.md"
+Issues = "https://github.com/CubeForever/minicode/issues"
 
 [project.scripts]
 minicode = "minicode.cli:main"

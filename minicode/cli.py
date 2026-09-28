@@ -99,6 +99,11 @@ def _parse_args(argv=None):
     ap.add_argument("-c", "--continue", dest="continue_last", action="store_true",
                     help="恢复上一次会话")
     ap.add_argument("--resume", action="store_true", help="交互式选择历史会话")
+    ap.add_argument("--install", metavar="SRC",
+                    help="安装扩展包（git 仓库地址或本地目录）后退出")
+    ap.add_argument("--user", action="store_true",
+                    help="配合 --install：装入 ~/.minicode 而非项目 .minicode")
+    ap.add_argument("--force", action="store_true", help="配合 --install：覆盖同名扩展")
     ap.add_argument("--cwd", help="工作目录")
     ap.add_argument("--version", action="version", version=f"minicode {__version__}")
     return ap.parse_args(argv)
@@ -1197,6 +1202,19 @@ def main(argv=None) -> int:
             return 2
     cwd = Path.cwd()
     ui = UI()
+    if getattr(args, "install", None):
+        # 安装不需要 API 配置——放在 load_config 之前，没配 key 也能装扩展
+        from .install import InstallError, format_report, install_pack
+        try:
+            report = install_pack(args.install, cwd, user=args.user,
+                                  force=args.force)
+            ui.plain(format_report(report))
+            if report["installed"]:
+                ui.info("已安装的扩展在新会话自动加载；本地插件首次使用时需确认")
+            return 0
+        except InstallError as e:
+            ui.error(str(e))
+            return 1
     cfg = load_config(args)
     if cfg is None:
         return 2

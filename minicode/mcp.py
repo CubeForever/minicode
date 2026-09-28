@@ -3,12 +3,17 @@
 Connects to servers configured under ``mcpServers`` (same shape as Claude Code),
 discovers their tools and exposes them as ``mcp__<server>__<tool>``.
 JSON-RPC 2.0 over the server's stdin/stdout, one request at a time.
+
+v0.16：协议版本 2025-06-18（被拒自动回退旧版）；每服务器可配 timeout；
+stdio 读取移入后台线程（服务器挂起只会超时，不再卡死整个回合）。
 """
 from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -17,13 +22,14 @@ from typing import Dict, List, Optional, Tuple
 
 from .tools.base import Tool, ToolError
 
-PROTOCOL_VERSION = "2024-11-05"
+PROTOCOL_VERSION = "2025-06-18"
+LEGACY_PROTOCOL_VERSION = "2024-11-05"
+DEFAULT_TIMEOUT = 30
 
 
 def _version() -> str:
     from . import __version__
     return __version__
-REQUEST_TIMEOUT = 30
 
 
 class McpError(RuntimeError):
@@ -43,6 +49,11 @@ class McpClient:
         self.error = ""
         self.tools: List[dict] = []
         self._id = 0
+        try:
+            self.timeout = max(1, int(self.cfg.get("timeout") or DEFAULT_TIMEOUT))
+        except (TypeError, ValueError):
+            self.timeout = DEFAULT_TIMEOUT
+        self._lines: Optional[queue.Queue] = None
 
     # ---------- lifecycle ----------
 
@@ -66,10 +77,15 @@ class McpClient:
             self.status = "failed"
             self.error = str(e)[:300]
             return False
+        self._start_reader()
         try:
-            self.request("initialize", {
-                "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                "clientInfo": {"name": "minicode", "version": _version()}})
+            if not self._initialize(PROTOCOL_VERSION):
+                # 旧服务器可能拒绝新版本：按规范用旧版重协商一次
+                if not self._initialize(LEGACY_PROTOCOL_VERSION):
+                    self.status = "failed"
+                    self.error = "initialize failed (both protocol versions)"
+                    self.stop()
+                    return False
             self.notify("notifications/initialized", {})
             result = self.request("tools/list", {}) or {}
             self.tools = result.get("tools") or []
@@ -80,6 +96,30 @@ class McpClient:
             self.error = str(e)[:300]
             self.stop()
             return False
+
+    def _initialize(self, protocol_version: str) -> bool:
+        try:
+            self.request("initialize", {
+                "protocolVersion": protocol_version, "capabilities": {},
+                "clientInfo": {"name": "minicode", "version": _version()}})
+            return True
+        except McpError:
+            return False
+
+    def _start_reader(self):
+        """stdout 读线程：服务器挂起时 request() 按超时返回，而不是永远阻塞。"""
+        self._lines = queue.Queue()
+        t = threading.Thread(target=self._read_loop, daemon=True)
+        t.start()
+
+    def _read_loop(self):
+        try:
+            for line in self.proc.stdout:
+                self._lines.put(line)
+        except Exception:
+            pass
+        finally:
+            self._lines.put(None)   # EOF 哨兵
 
     def stop(self):
         if self.http_url:
@@ -116,7 +156,7 @@ class McpClient:
         req = urllib.request.Request(self.http_url,
                                      data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                                      method="POST", headers=headers)
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             sid = resp.headers.get("Mcp-Session-Id")
             ctype = resp.headers.get("Content-Type", "")
             raw = resp.read().decode("utf-8", "replace")
@@ -172,10 +212,17 @@ class McpClient:
         self._id += 1
         rid = self._id
         self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
-        deadline = time.time() + REQUEST_TIMEOUT
-        while time.time() < deadline:
-            line = self.proc.stdout.readline()
-            if line == "":
+        deadline = time.time() + self.timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise McpError(f"mcp:{self.name}: timeout waiting for {method}")
+            try:
+                line = self._lines.get(timeout=remaining)
+            except queue.Empty:
+                raise McpError(
+                    f"mcp:{self.name}: timeout waiting for {method}") from None
+            if line is None:
                 raise McpError(f"mcp:{self.name} closed the stream")
             line = line.strip()
             if not line:
@@ -189,7 +236,7 @@ class McpClient:
                     err = msg["error"] or {}
                     raise McpError(f"mcp:{self.name}: {err.get('message') or err}")
                 return msg.get("result")
-        raise McpError(f"mcp:{self.name}: timeout waiting for {method}")
+            # 其他 id 的响应 / 服务器通知：当前不处理，跳过继续等
 
     def notify(self, method: str, params: dict):
         if self.http_url:

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.16.0 (2026-09-28)
+
+分发层（v0.16 主题：**扩展生态 + PyPI 发布 + MCP 升级**）：
+
+**扩展分发：`minicode install`**
+
+- `minicode --install <git仓库|本地目录>` 一条命令安装扩展包（`--user` 装入 `~/.minicode`，`--force` 覆盖同名）
+- 约定目录自动发现（`skills/`、`commands/`、`agents/`、`tools/`）；可选 `minicode.json` manifest 显式声明 name/version/路径；单文件 `.md` 技能自动包装成技能目录
+- 安全边界延续既有信任体系：安装只复制文件——插件 `.py` 首次加载强制确认；manifest 中的 `mcpServers` 明确拒绝自动安装（提示手动配置）；git 源浅克隆、临时目录必清理，绝不触碰用户本地目录
+- 无需 API 配置即可安装（--install 在配置加载之前处理）
+
+**MCP 升级**
+
+- 协议版本 2024-11-05 → **2025-06-18**；只认旧版的服务器被拒时自动用 `2024-11-05` 重协商
+- stdio 读取移入后台线程：服务器挂起时请求按配置超时返回错误，不再卡死整个回合（此前 `readline()` 会永久阻塞）
+- 每服务器可配超时：`mcpServers` 配置新增 `"timeout"` 键（秒，默认 30）
+
+**PyPI 发布流水线**
+
+- 新增 `.github/workflows/release.yml`：推送 `v*` 标签 → 构建 sdist/wheel → wheel 冒烟（安装 + `--version` + fake LLM 自检）→ PyPI Trusted Publishing（OIDC，无需 API token；需在 PyPI 登记可信发布方）
+- pyproject 元数据补全：classifiers / keywords / urls / authors（发布候选就绪）
+
+
 ## 0.15.0 (2026-09-28)
 
 呈现层与内核韧性（v0.15 主题：**终端渲染 + 持久 shell + Provider 对称性**）：
