@@ -141,17 +141,26 @@ class ShellState:
                     self._env_baseline = None
                     return
                 dump = self._ps_env_dump()
-                proc = subprocess.run(
-                    [exe, "-NoProfile", "-NonInteractive", "-Command", dump],
-                    cwd=str(self.cwd), capture_output=True, timeout=20,
-                    env=dict(os.environ))
-                self._env_baseline = self._parse_env(_decode(proc.stdout or b""))
+                try:
+                    proc = subprocess.run(
+                        [exe, "-NoProfile", "-NonInteractive", "-Command", dump],
+                        cwd=str(self.cwd), capture_output=True, timeout=20,
+                        env=dict(os.environ))
+                    self._env_baseline = self._parse_env_lines(_decode(proc.stdout or b""))
+                except Exception as e:
+                    import sys as _s
+                    print("EXC ps baseline:", repr(e), file=_s.stderr)
+                    raise
             elif self.shell == "cmd":
                 proc = subprocess.run(["cmd", "/C", "set"], cwd=str(self.cwd),
                                       capture_output=True, timeout=15,
                                       env=dict(os.environ))
-                self._env_baseline = self._parse_env(_decode(proc.stdout or b""))
+                self._env_baseline = self._parse_env_lines(_decode(proc.stdout or b""))
         except Exception:
+            self._env_baseline = None
+        # 解析出的基线过小 = 转储不可信（截断/解码失败）——宁可关闭持久化，
+        # 也不把「整个环境」当成差异在重放前缀里爆炸
+        if self._env_baseline is not None and len(self._env_baseline) < 3:
             self._env_baseline = None
 
     @staticmethod
@@ -213,8 +222,8 @@ class ShellState:
             current = self._parse_env(raw)
         else:
             current = self._parse_env_lines(dump)
-        if not current:
-            return
+        if not current or len(current) * 2 < len(self._env_baseline):
+            return   # 转储疑似截断：跳过本次差分，绝不全量重放/全量 unset
         overrides, unsets = {}, set()
         for k in set(self._env_baseline) | set(current):
             base_v = self._env_baseline.get(k)
@@ -227,9 +236,17 @@ class ShellState:
                 overrides[k] = cur_v
         self._env_overrides, self._env_unsets = overrides, unsets
 
+    _MAX_PREFIX = 4000   # cmd 单行命令上限 8191，重放前缀超过即放弃
+
     def env_export_prefix(self) -> str:
         """下一条命令前的重放前缀（按 shell 语法）。值经编码传输，杜绝
         引号/特殊字符炸掉语法；非法变量名跳过。"""
+        prefix = self._build_export_prefix()
+        if len(prefix) > self._MAX_PREFIX:
+            return ""   # 安全阀：本次放弃重放，环境持久化静默暂停
+        return prefix
+
+    def _build_export_prefix(self) -> str:
         if self._env_baseline is None:
             return ""
         parts: list = []
