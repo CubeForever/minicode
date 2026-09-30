@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+<div id="sr" class="visually-hidden" role="status" aria-live="polite"></div>
 
 <aside class="sidebar" id="sidebar">
   <div class="side-brand">
@@ -71,6 +72,7 @@
   </header>
 
   <main id="scroller">
+    <button id="jumpDown" hidden aria-label="回到底部">↓</button>
     <div id="chat" role="log" aria-live="polite" aria-label="对话消息">
       <div id="hero">
         <div class="eyebrow mono">minicode — terminal coding agent</div>
@@ -115,7 +117,7 @@
 </div>
 
 <!-- 模型 API 设置 -->
-<div class="modal" id="settingsModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="settingsModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b>模型 API</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="form">
@@ -160,7 +162,7 @@
 </div>
 
 <!-- 扩展面板：技能 / 插件 / 子智能体 / 自定义命令 / MCP（分页签管理） -->
-<div class="modal" id="extModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="extModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b>扩展</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="ext-tabs mono" id="extTabs"></div>
@@ -175,7 +177,7 @@
 </div>
 
 <!-- 工作区管理 -->
-<div class="modal" id="wsModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="wsModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b>工作区</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="form">
@@ -192,7 +194,7 @@
 </div>
 
 <!-- 服务端目录浏览器 -->
-<div class="modal" id="dirModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="dirModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b>选择工作区目录</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="dir-body">
@@ -211,7 +213,7 @@
 </div>
 
 <!-- 扩展新建表单 -->
-<div class="modal" id="formModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="formModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b id="formTitle">新建</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="form" id="formFields"></div>
@@ -223,7 +225,7 @@
 </div>
 
 <!-- 扩展详情 -->
-<div class="modal" id="detailModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="detailModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b>扩展详情</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="detail-body" id="detailBody">
@@ -233,7 +235,7 @@
 </div>
 
 <!-- 通用列表（回退选择等） -->
-<div class="modal" id="listModal" hidden>
+<div class="modal" role="dialog" aria-modal="true" id="listModal" hidden>
   <div class="modal-card">
     <div class="modal-head"><b id="listTitle">选择</b><button class="iconbtn" data-close aria-label="关闭">✕</button></div>
     <div class="modal-hint dim small" id="listHint"></div>

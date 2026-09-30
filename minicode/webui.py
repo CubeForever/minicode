@@ -69,6 +69,8 @@ class WebBridgeUI(UI):
     """UI 实现：渲染调用 → JSON 事件广播给所有 SSE 订阅者；
     confirm/choose → 浏览器交互卡片，阻塞等答复后按 REPL 同样的语义返回。"""
 
+    wants_raw_markdown = True   # 浏览器自行渲染 Markdown，流事件须为原始文本
+
     def __init__(self):
         super().__init__()
         self._subs: List[Queue] = []

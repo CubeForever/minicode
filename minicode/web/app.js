@@ -130,6 +130,10 @@ function el(tag, cls, html) {
   return e;
 }
 function hideHero() { const h = $("#hero"); if (h) h.remove(); }
+function announce(msg) {                      // 屏幕阅读器状态播报（避免流式刷屏）
+  const sr = $("#sr");
+  if (sr) { sr.textContent = ""; sr.textContent = msg; }
+}
 function scrollDown(force) {
   const m = $("main");
   const near = m.scrollHeight - m.scrollTop - m.clientHeight < 160;
@@ -150,7 +154,7 @@ function startTicket(time) {
   t.innerHTML = `<div class="tk-head">` +
     `<span class="tk-no mono">Nº ${padNo(ticketNo)}</span>` +
     (time ? `<span class="tk-time mono">${esc(time)}</span>` : "") +
-    `<span class="barcode"></span>` +
+    `<span class="barcode" aria-hidden="true"></span>` +
     `<span class="tk-stamp mono" hidden></span></div>` +
     `<div class="tk-body"></div>`;
   // 条码只在工单头部保留为小尺寸品牌细节（CSS 已限宽 64px）
@@ -206,30 +210,23 @@ function newAssistant() {
   ticketBody().appendChild(wrap);
   current = { el: wrap, md: mdEl, think: null, thinkStart: 0, thinkDone: false,
               raw: "", timer: null };
-  current.timer = setInterval(() => {
-    if (current && current.dirty) {
+  current.md.classList.add("streaming");     // CSS ::after 打字光标
+  const tick = () => {                       // rAF 节流：后台标签页自动暂停
+    if (!current) return;
+    if (current.dirty && !document.hidden) {
       current.dirty = false;
       current.md.innerHTML = md(current.raw);
-      placeCaret(current.md);          // 流式打字光标
       scrollDown();
     }
-  }, 60);
+    current.timer = requestAnimationFrame(tick);
+  };
+  current.timer = requestAnimationFrame(tick);
   return current;
-}
-function placeCaret(mdEl) {
-  mdEl.querySelector(".stream-caret") && mdEl.querySelector(".stream-caret").remove();
-  const walker = document.createTreeWalker(mdEl, NodeFilter.SHOW_TEXT);
-  let last = null;
-  while (walker.nextNode()) {
-    if (walker.currentNode.textContent) last = walker.currentNode;
-  }
-  if (last && last.parentNode) {
-    last.parentNode.insertBefore(el("span", "stream-caret"), last.nextSibling);
-  }
 }
 function closeCurrent() {
   if (!current) return;
-  clearInterval(current.timer);
+  cancelAnimationFrame(current.timer);
+  current.md.classList.remove("streaming");
   finalizeThink();
   if (current.raw) {
     const text = current.raw;                  // 捕获快照：current 即将置空
@@ -383,7 +380,7 @@ function renderConfirm(id, title, preview) {
   }).join("\n") : "";
   card.innerHTML = `<span class="stamp-line mono">SIGN-OFF · 签核</span>` +
     `<div class="confirm-title">` +
-    `<span class="warn-ico">⚠</span>${esc(title)}</div>` +
+    `<span class="warn-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>${esc(title)}</div>` +
     (preview ? `<pre class="preview">${pv}</pre>` : "") +
     `<div class="actions">` +
     `<button class="btn primary" data-v="y">允许</button>` +
@@ -394,6 +391,9 @@ function renderConfirm(id, title, preview) {
     if (b) answerAsk(id, b.dataset.v, card);
   });
   ticketBody().appendChild(card);
+  const primary = card.querySelector(".btn.primary");
+  if (primary) primary.focus({ preventScroll: true });   // 焦点直达签核主按钮
+  announce("需要签核：" + title);
   scrollDown(true);
 }
 
@@ -403,7 +403,7 @@ function renderChoose(id, question, options, multi, allowOther) {
   hideShimmer();
   hideHero();
   const card = el("div", "choose-card");
-  card.innerHTML = `<div class="q">❓ ${esc(question)}</div>`;
+  card.innerHTML = `<div class="q"><svg class="q-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(question)}</div>`;
   const picked = new Set();
   const finish = (labels) => {
     card.innerHTML = `<div class="q">❓ ${esc(question)}</div>` +
@@ -462,6 +462,12 @@ async function answerAsk(id, value, card) {
 }
 
 /* ---------------- API ---------------- */
+function showModal(sel) {                       // 打开弹窗并聚焦首个控件
+  const m = $(sel);
+  m.hidden = false;
+  const f = m.querySelector("input:not([type=checkbox]), select, textarea, button:not([data-close])");
+  if (f) f.focus({ preventScroll: true });
+}
 async function api(path, body) {
   const r = await fetch(path, {
     method: "POST",
@@ -498,9 +504,11 @@ function setBusy(b) {
     const stamp = ticket && ticket.err ? "ERRORS" : "DONE";
     closeTicket(ticketErr ? "ERRORS" : stamp);
     ticketErr = false;
+    announce(ticketErr ? "回合结束（有错误）" : "回合完成");
     refreshSessions();
   } else {
     showShimmer("minicode 正在工作");
+    announce("minicode 开始工作");
     if (ticket) setTicketStamp(ticket, "RUNNING");
   }
 }
@@ -550,7 +558,7 @@ function connectEvents() {
       case "result": attachResult(e.text); break;
       case "info": sysLine("info", e.text); break;
       case "warn": sysLine("warn", e.text); break;
-      case "error": sysLine("error", e.text); if (ticket) ticket.err = true; break;
+      case "error": sysLine("error", e.text); announce("错误：" + e.text); if (ticket) ticket.err = true; break;
       case "plain": sysLine("plain", e.text); break;
       case "tokens": break;                       // 状态轮询已覆盖
       case "todos": renderTodos(e.todos); break;
@@ -665,9 +673,17 @@ function showCmdHint() {
   if (!v.startsWith("/") || v.includes(" ")) { hint.hidden = true; return; }
   const hits = COMMANDS.filter(c => c.startsWith(v.toLowerCase()));
   hint.hidden = !hits.length;
-  hint.innerHTML = hits.map(c => `<b>${c}</b>`).join(" · ");
+  hint.innerHTML = hits.map(c => `<b class="cmdopt" role="button" tabindex="0">${c}</b>`).join(" · ");
 }
 function hideCmdHint() { $("#cmdHint").hidden = true; }
+$("#cmdHint").addEventListener("click", e => {          // 点击提示直接填入
+  const b = e.target.closest(".cmdopt");
+  if (!b) return;
+  input.value = b.textContent;
+  autosize();
+  hideCmdHint();
+  input.focus();
+});
 
 /* ---------------- 侧边栏：会话管理 ---------------- */
 async function refreshSessions() {
@@ -806,7 +822,7 @@ async function openSettings() {
     $("#cfgCtx").value = c.context_limit || "";
     $("#cfgEffort").value = c.reasoning_effort || "";
     $("#probeOut").textContent = "";
-    $("#settingsModal").hidden = false;
+    showModal("#settingsModal");
   } catch (e) { /* 静默 */ }
 }
 $("#btnSettings").addEventListener("click", openSettings);
@@ -875,7 +891,7 @@ $("#extSearch").addEventListener("input", e => {
 });
 
 async function openExtensions() {
-  $("#extModal").hidden = false;
+  showModal("#extModal");
   $("#extBody").innerHTML = `<div class="side-empty">加载中…</div>`;
   try {
     extData = await fetch("/api/extensions",
@@ -1008,6 +1024,10 @@ document.addEventListener("keydown", e => {
     document.body.classList.remove("side-open");
     closed = true;
   }
+  if (!closed) {                               // 活动签核卡：Esc = 拒绝
+    const deny = chat.querySelector(".confirm-card .actions [data-v='n']");
+    if (deny) { deny.click(); return; }
+  }
   hideCmdHint();
   if (closed) input.focus();
 });
@@ -1015,7 +1035,7 @@ document.addEventListener("keydown", e => {
 let dirSelectCb = null;
 async function browseDir(startPath, onPick) {
   dirSelectCb = onPick;
-  $("#dirModal").hidden = false;
+  showModal("#dirModal");
   await loadDir(startPath || "");
 }
 async function loadDir(path) {
@@ -1124,7 +1144,7 @@ function openExtForm(type) {
       openExtensions();
     } catch (e) { /* 错误已展示 */ }
   };
-  $("#formModal").hidden = false;
+  showModal("#formModal");
 }
 
 $("#btnBrowse").addEventListener("click", async () => {
@@ -1187,7 +1207,7 @@ $("#btnProbe").addEventListener("click", async () => {
 
 /* ---------------- 工作区弹窗 ---------------- */
 $("#wsCurrent").addEventListener("click", () => {
-  $("#wsModal").hidden = false;
+  showModal("#wsModal");
   refreshWorkspaces();
 });
 /* ---------------- 通用列表弹窗（回退等） ---------------- */
@@ -1207,7 +1227,7 @@ function showPickList(title, items, hint, prefix) {
     });
     box.appendChild(b);
   });
-  $("#listModal").hidden = false;
+  showModal("#listModal");
 }
 
 /* ---------------- 计划批准条 ---------------- */
@@ -1249,6 +1269,14 @@ chat.addEventListener("click", e => {
   });
 });
 
+/* ---------------- 回到底部 ---------------- */
+const jumpDown = $("#jumpDown");
+$("main").addEventListener("scroll", () => {
+  const m = $("main");
+  jumpDown.hidden = m.scrollHeight - m.scrollTop - m.clientHeight < 400;
+}, { passive: true });
+jumpDown.addEventListener("click", () => scrollDown(true));
+
 /* ---------------- 启动 ---------------- */
 (async function boot() {
   try {
@@ -1270,7 +1298,7 @@ chat.addEventListener("click", e => {
 
 /* ---------------- 扩展详情弹窗 ---------------- */
 async function openExtDetail(tab, name) {
-  $("#detailModal").hidden = false;
+  showModal("#detailModal");
   $("#detailBody").innerHTML = `<div class="side-empty">加载中…</div>`;
   try {
     const d = await fetch(

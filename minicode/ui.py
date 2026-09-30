@@ -326,6 +326,21 @@ class UI:
         return [options[picked.pop()].get("label", "")] if picked else []
 
 
+class RawStream:
+    """Pass-through stream renderer for Web/bridge UIs: the browser renders
+    markdown itself, so text must reach it untouched (终端 Markdown 转换
+    只属于终端 —— 若把 • / 表格字形提前画进文本，浏览器端将无法再渲染)。"""
+
+    def __init__(self, emit):
+        self.emit = emit
+
+    def feed(self, chunk: str):
+        self.emit(chunk)
+
+    def flush(self):
+        pass
+
+
 class StreamRenderer:
     """Line-buffered live rendering with zero-dependency terminal markdown.
 

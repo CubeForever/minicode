@@ -17,7 +17,7 @@ from .guard import bash_guard_reason, file_guard_reason
 from .llm import ToolUnsupportedError, tool_message, user_message
 from .session import Session
 from .tools.base import ToolContext, ToolError, summarize_result
-from .ui import Spinner, StreamRenderer
+from .ui import RawStream, Spinner, StreamRenderer
 
 MODES = ("default", "accept-edits", "plan", "full-access")
 MODE_ALIASES = {"yolo": "full-access"}  # legacy name kept for compatibility
@@ -203,7 +203,11 @@ class Agent:
         stream = self.provider.stream(self.session.messages, schemas, system, thinking)
         spinner = Spinner("Thinking")
         spinner.start()
-        renderer = StreamRenderer(self.ui.stream_text)
+        # 终端做 Markdown 转换；Web 桥接要原始文本（浏览器自己渲染）
+        if getattr(self.ui, "wants_raw_markdown", False):
+            renderer = RawStream(self.ui.stream_text)
+        else:
+            renderer = StreamRenderer(self.ui.stream_text)
         msg = None
         usage = None
         partial: list = []   # 已流出的正文，用于中断时保留部分回复

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.18.1 (2026-09-30)
+
+品牌界面打磨（按 ui-ux-pro-max / ui-optimize 规则库全面审计）：
+
+**修复回归**
+- Web 端 Markdown 保真：v0.15 起 Web 桥接误用终端流渲染器，模型的 `**加粗**`/表格/列表在服务端就被转成终端字形（•/│），浏览器端无法再渲染。新增 RawStream——终端做 Markdown 转换，Web 桥接走原始流，各得其所
+
+**可访问性（WCAG）**
+- 流式输出不再向屏幕阅读器刷屏：#chat 移除 aria-live，新增视觉隐藏状态区，仅播报回合开始/完成/需签核/错误等关键事件
+- 签核卡自动聚焦「允许」主按钮（焦点管理）；Esc 在有活动签核卡时=拒绝
+- 全部弹窗补 role="dialog" + aria-modal；打开时聚焦首个控件
+- ⚠/❓ emoji 字形替换为品牌同款描边 SVG；工单条码标记 aria-hidden（纯装饰）
+
+**交互与触控**
+- 全局 :active 按压反馈（scale .985）；button/a 加 touch-action: manipulation 消除 300ms 点按延迟
+- 命令提示（/cmdhint）可点击直接填入；上翻时出现「回到底部」悬浮按钮
+
+**性能与排版**
+- 流式渲染 rAF 节流 + 后台标签页自动暂停；打字光标改 CSS ::after（移除每帧全树遍历）
+- 工单 content-visibility: auto——长会话视口外工单跳过渲染
+- 非标准字重 620/640/660 → 600（非可变字体后备不再跳变）；等宽数字 tabular-nums；md 标题台阶 19/17 → 20/18
+
+测试 321 项全绿。
 ## 0.18.0 (2026-09-30)
 
 生态纵深（v0.18 主题：**hooks 体系 + MCP resources/prompts + 全 shell 环境持久化 + 扩展市场**）：
