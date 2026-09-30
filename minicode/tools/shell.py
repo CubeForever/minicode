@@ -24,6 +24,8 @@ ENV_MARKER = "__MCC_ENV__"
 # 每条命令都会被 bash 自身改写的变量——不纳入持久化差分
 _ENV_NOISE = {"PWD", "OLDPWD", "SHLVL", "_", "PS1"}
 _ENV_KEY_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# cmd 无引号 set 值中需要 ^ 转义的字符（& 前不留空格，空格本身也要转义）
+_CMD_UNSAFE = set(" &|<>()^=\"\t")
 
 
 def find_bash_exe() -> Optional[str]:
@@ -97,10 +99,10 @@ class ShellState:
     """Persistent cwd + shell choice + persistent environment + background
     shells across tool calls.
 
-    环境持久化（仅 bash）：ShellState 创建时抓取一次环境基线；此后每条命令
-    执行完附加 `env -0` 转储，与基线做差分得到 overrides/unsets；下一条命令
-    前以 `export K=V;` 前缀重放——`export`、`source activate`、`unset` 从此
-    跨调用存活（与 cwd 持久化同一套机制）。powershell/cmd 不做差分。
+    环境持久化（bash / powershell / cmd）：ShellState 创建时抓取一次环境
+    基线；此后每条命令执行完附加环境转储，与基线做差分得到 overrides/
+    unsets；下一条命令前按各自 shell 语法重放——`export`、`source activate`、
+    `unset`（bash）、`$env:X`（PowerShell）、`set X`（cmd）从此跨调用存活。
     """
 
     def __init__(self, cwd: Path, shell: str):
@@ -111,7 +113,7 @@ class ShellState:
         self._env_baseline: Optional[dict] = None
         self._env_overrides: Dict[str, str] = {}
         self._env_unsets: set = set()
-        if shell == "bash":
+        if shell in ("bash", "powershell", "cmd"):
             self._capture_env_baseline()
 
     def next_id(self) -> str:
@@ -120,22 +122,46 @@ class ShellState:
 
     # ---------- persistent environment ----------
     def _capture_env_baseline(self):
+        """按 shell 抓取环境基线。任一环节失败 → 持久化静默降级。"""
         try:
-            import base64
-            bash = find_bash_exe() or "bash"
-            # 与命令尾的转储同一条 base64 管道：env -0 的 NUL 字节若直接进入
-            # 解码链会被 _decode 误判成 UTF-16
-            proc = subprocess.run([bash, "-c", "env -0 | base64 -w0"],
-                                  cwd=str(self.cwd), capture_output=True,
-                                  timeout=10, env=dict(os.environ))
-            raw = base64.b64decode(_decode(proc.stdout or b"").strip())
-            self._env_baseline = self._parse_env(raw.decode("utf-8",
-                                                            errors="replace"))
+            if self.shell == "bash":
+                import base64
+                bash = find_bash_exe() or "bash"
+                # 与命令尾的转储同一条 base64 管道：env -0 的 NUL 字节若直接
+                # 进入解码链会被 _decode 误判成 UTF-16
+                proc = subprocess.run([bash, "-c", "env -0 | base64 -w0"],
+                                      cwd=str(self.cwd), capture_output=True,
+                                      timeout=10, env=dict(os.environ))
+                raw = base64.b64decode(_decode(proc.stdout or b"").strip())
+                self._env_baseline = self._parse_env(raw.decode("utf-8",
+                                                                errors="replace"))
+            elif self.shell == "powershell":
+                exe = shutil.which("pwsh") or shutil.which("powershell")
+                if not exe:
+                    self._env_baseline = None
+                    return
+                dump = self._ps_env_dump()
+                proc = subprocess.run(
+                    [exe, "-NoProfile", "-NonInteractive", "-Command", dump],
+                    cwd=str(self.cwd), capture_output=True, timeout=20,
+                    env=dict(os.environ))
+                self._env_baseline = self._parse_env(_decode(proc.stdout or b""))
+            elif self.shell == "cmd":
+                proc = subprocess.run(["cmd", "/C", "set"], cwd=str(self.cwd),
+                                      capture_output=True, timeout=15,
+                                      env=dict(os.environ))
+                self._env_baseline = self._parse_env(_decode(proc.stdout or b""))
         except Exception:
-            self._env_baseline = None   # 环境持久化不可用，静默降级
+            self._env_baseline = None
+
+    @staticmethod
+    def _ps_env_dump() -> str:
+        return ('Get-ChildItem Env: | ForEach-Object '
+                '{ "$($_.Name)=$($_.Value)" }')
 
     @staticmethod
     def _parse_env(dump: str) -> dict:
+        """bash 路径：NUL 分隔的 KEY=VALUE（env -0 解码后）。"""
         env = {}
         for chunk in dump.split("\x00"):
             if "=" not in chunk:
@@ -145,24 +171,50 @@ class ShellState:
                 env[k] = v
         return env
 
+    @staticmethod
+    def _parse_env_lines(dump: str) -> dict:
+        """PowerShell / cmd 路径：逐行 KEY=VALUE。cmd 的驱动器伪变量
+        （`=C:` 开头）与空键跳过；含换行无法跨行表示的值丢弃。"""
+        env = {}
+        for line in dump.splitlines():
+            line = line.strip("\r\n")
+            if "=" not in line or line.startswith("="):
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            if k and k not in _ENV_NOISE and "\n" not in v and "\r" not in v:
+                env[k] = v
+        return env
+
+    def _parse_dump(self, dump: str) -> dict:
+        if self.shell == "bash":
+            return self._parse_env(dump)
+        return self._parse_env_lines(dump)
+
     def update_env(self, dump: str):
-        """命令执行后的 env 转储（base64 编码的 `env -0` 输出）→ 差分更新
-        overrides/unsets。转储为空或解不开（env -0 / base64 不可用）时视为
-        不可信，直接跳过——绝不把「无转储」当成「全部变量被 unset」。"""
+        """命令执行后的环境转储 → 差分更新 overrides/unsets。转储为空或
+        解析不出任何变量时视为不可信，直接跳过——绝不把「无转储」当成
+        「全部变量被 unset」。"""
         if self._env_baseline is None:
             return
         dump = (dump or "").strip()
         if not dump:
             return
-        import base64
-        try:
-            raw = base64.b64decode(dump, validate=True).decode("utf-8",
-                                                               errors="replace")
-        except Exception:
+        current: dict = {}
+        if self.shell == "bash":
+            import base64
+            try:
+                raw = base64.b64decode(dump, validate=True).decode("utf-8",
+                                                                   errors="replace")
+            except Exception:
+                return
+            if "=" not in raw:
+                return
+            current = self._parse_env(raw)
+        else:
+            current = self._parse_env_lines(dump)
+        if not current:
             return
-        if "=" not in raw:
-            return
-        current = self._parse_env(raw)
         overrides, unsets = {}, set()
         for k in set(self._env_baseline) | set(current):
             base_v = self._env_baseline.get(k)
@@ -170,26 +222,55 @@ class ShellState:
             if cur_v is None and base_v is not None:
                 unsets.add(k)
             elif cur_v is not None and cur_v != base_v:
+                if "\n" in cur_v or "\r" in cur_v:
+                    continue   # 行式转储无法安全回传多行值（bash 走 NUL 不受影响）
                 overrides[k] = cur_v
         self._env_overrides, self._env_unsets = overrides, unsets
 
     def env_export_prefix(self) -> str:
-        """下一条命令前的重放前缀（bash）。值逐个 base64 编码传输——导出
-        脚本里永远只有 [A-Za-z0-9+/=]，杜绝引号/$/反斜杠等值内容炸掉语法；
-        非法变量名（如 bash 导出的 BASH_FUNC_x%%）直接跳过。"""
+        """下一条命令前的重放前缀（按 shell 语法）。值经编码传输，杜绝
+        引号/特殊字符炸掉语法；非法变量名跳过。"""
         if self._env_baseline is None:
             return ""
-        import base64
-        parts = []
-        for k in sorted(self._env_unsets):
-            if _ENV_KEY_OK.match(k):
-                parts.append(f"unset {k};")
-        for k, v in sorted(self._env_overrides.items()):
-            if not _ENV_KEY_OK.match(k):
-                continue
-            enc = base64.b64encode(v.encode("utf-8", "surrogateescape")).decode("ascii")
-            parts.append(f"export {k}=$(printf %s '{enc}' | base64 -d);")
-        return " ".join(parts)
+        parts: list = []
+        if self.shell == "bash":
+            import base64
+            for k in sorted(self._env_unsets):
+                if _ENV_KEY_OK.match(k):
+                    parts.append(f"unset {k};")
+            for k, v in sorted(self._env_overrides.items()):
+                if not _ENV_KEY_OK.match(k):
+                    continue
+                enc = base64.b64encode(v.encode("utf-8", "surrogateescape")).decode("ascii")
+                parts.append(f"export {k}=$(printf %s '{enc}' | base64 -d);")
+            return " ".join(parts)
+        if self.shell == "powershell":
+            for k in sorted(self._env_unsets):
+                if _ENV_KEY_OK.match(k):
+                    parts.append(f"Remove-Item Env:{k} -ErrorAction SilentlyContinue;")
+            for k, v in sorted(self._env_overrides.items()):
+                if not _ENV_KEY_OK.match(k) or "\n" in v or "\r" in v:
+                    continue
+                safe = v.replace("'", "''")
+                parts.append(f"$env:{k}='{safe}';")
+            return "".join(parts)
+        if self.shell == "cmd":
+            # cmd 的引号会破坏 /V:ON 延迟展开（引号超过两个时 cmd 的
+            # 引号剥离规则把整行搞坏），因此 set 一律不加引号：
+            # 值逐字符 ^ 转义（含空格），跳过含 %/" 的值，& 之前不留空格
+            # （否则尾随空格会并进值里）。
+            for k in sorted(self._env_unsets):
+                if _ENV_KEY_OK.match(k):
+                    parts.append(f"set {k}=&")
+            for k, v in sorted(self._env_overrides.items()):
+                if not _ENV_KEY_OK.match(k) or "\n" in v or "\r" in v:
+                    continue
+                if "%" in v or '"' in v:
+                    continue   # % 无法在命令行内安全转义
+                esc = "".join("^" + ch if ch in _CMD_UNSAFE else ch for ch in v)
+                parts.append(f"set {k}={esc}&")
+            return "".join(parts)
+        return ""
 
 
 class BackgroundShell:
@@ -258,8 +339,8 @@ class _BaseShellTool(Tool):
 
     def _argv(self, command: str) -> list:
         sh = self.state.shell
+        prefix = self.state.env_export_prefix()
         if sh == "bash":
-            prefix = self.state.env_export_prefix()
             inner = '$(cygpath -m "$(pwd)" 2>/dev/null || pwd)'
             script = (f"{prefix}{command}\n"
                       "__mcc_rc=$?\n"
@@ -270,11 +351,14 @@ class _BaseShellTool(Tool):
             return [find_bash_exe() or "bash", "-c", script]
         if sh == "powershell":
             exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
-            ps = (f"{command}\n"
-                  f"Write-Output (\"{MARKER}\" + (Get-Location).Path)")
+            ps = (f"{prefix}{command}\n"
+                  f"Write-Output (\"{MARKER}\" + (Get-Location).Path)\n"
+                  f"Write-Output \"{ENV_MARKER}\"\n"
+                  f"{self.state._ps_env_dump()}")
             return [exe, "-NoProfile", "-NonInteractive", "-Command", ps]
         one_liner = " & ".join(ln for ln in command.splitlines() if ln.strip())
-        return ["cmd", "/V:ON", "/C", f"{one_liner} & echo {MARKER}!CD!"]
+        return ["cmd", "/V:ON", "/C",
+                f"{prefix}{one_liner} & echo {MARKER}!CD! & echo {ENV_MARKER} & set"]
 
     def _popen(self, argv: list) -> subprocess.Popen:
         env = dict(os.environ)

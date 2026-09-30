@@ -333,7 +333,7 @@ def test_load_config_profile(tmp_path, monkeypatch):
 def test_hook_blocks_prompt(tmp_path):
     agent = make_agent(tmp_path, FakeProvider([{"text": "no"}]),
                        hooks={"user_prompt_submit": "exit 1"})
-    blocked, _out = agent._run_hook("user_prompt_submit", {"prompt": "x"})
+    blocked, _out, _ok = agent._run_hook("user_prompt_submit", {"prompt": "x"})
     assert blocked is not None and blocked != ""
 
 
@@ -353,7 +353,7 @@ def test_hook_blocks_tool(tmp_path):
 def test_hook_passes_through(tmp_path):
     agent = make_agent(tmp_path, FakeProvider([{"text": "ok"}]),
                        hooks={"user_prompt_submit": "exit 0"})
-    blocked, _out = agent._run_hook("user_prompt_submit", {"prompt": "x"})
+    blocked, _out, _ok = agent._run_hook("user_prompt_submit", {"prompt": "x"})
     assert blocked is None
 
 

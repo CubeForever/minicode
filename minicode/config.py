@@ -33,7 +33,7 @@ PROVIDER_DEFAULTS = {
 RESTRICTED_KEYS = {
     "api_key", "base_url", "mcp_servers", "mcpServers", "hooks",
     "permissions", "verify_command", "extra_body", "webfetch_allow_private",
-    "fallbacks",
+    "fallbacks", "marketplaces",
 }
 _RESTRICTED_DICT_KEYS = {"permissions", "extra_body", "mcp_servers", "hooks"}
 
@@ -77,6 +77,7 @@ class Config:
     save_sessions: bool = True                       # False 时不落盘会话历史（隐私模式）
     webfetch_allow_private: bool = False             # allow web_fetch to hit internal IPs
     fallbacks: list = field(default_factory=list)    # 模型故障转移：[{"model": ..., "provider"/"base_url"/"api_key" 可选}]
+    marketplaces: list = field(default_factory=list) # 扩展市场索引源（https URL 或本地路径）
     extra_dirs: list = field(default_factory=list)   # /add-dir
     project_restricted: dict = field(default_factory=dict)  # 项目配置中的受限字段（信任门禁后生效）
     plugins_allowed: bool = True                     # 项目信任门禁结果（cli 设置）
@@ -194,6 +195,8 @@ def load_config(args) -> Optional[Config]:
         save_sessions=bool(merged.get("save_sessions", True)),
         webfetch_allow_private=bool(merged.get("webfetch_allow_private", False)),
         fallbacks=_normalize_fallbacks(merged.get("fallbacks")),
+        marketplaces=[str(u) for u in (merged.get("marketplaces") or [])
+                      if isinstance(u, str)],
         project_restricted=restricted,
         extra_dirs=list(merged.get("extra_dirs") or []),
         append_system_prompt=str(getattr(args, "append_system_prompt", "") or ""),

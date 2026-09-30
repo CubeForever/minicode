@@ -304,7 +304,8 @@ class Agent:
             allowed, _reason = self._authorized(tool, args)
             if not allowed:
                 return None  # rare (deny rule) — let the sequential path explain
-            if self._run_hook("pre_tool_use", {"tool": tool.name, "args": args})[0]:
+            if self._run_hook("pre_tool_use", {"tool": tool.name, "args": args},
+                              tool_name=tool.name)[0]:
                 return None
             planned.append((tool, args))
         self.ui.newline()
@@ -333,7 +334,8 @@ class Agent:
         for (tool, args), (content, _err) in zip(planned, results):
             text = content["text"] if isinstance(content, dict) else content
             self.ui.tool_result_note(text)
-            self._run_hook("post_tool_use", {"tool": tool.name, "args": args})
+            self._run_hook("post_tool_use", {"tool": tool.name, "args": args},
+                           tool_name=tool.name)
         return results
 
     def _execute(self, tc: dict) -> Tuple[object, bool]:
@@ -354,7 +356,8 @@ class Agent:
             msg = f"Error: invalid tool arguments: {e}. Raw: {raw[:300]}"
             self.ui.tool_result_note(msg)
             return msg, True
-        blocked, _out = self._run_hook("pre_tool_use", {"tool": tool.name, "args": args})
+        blocked, _out, hook_approved = self._run_hook(
+            "pre_tool_use", {"tool": tool.name, "args": args}, tool_name=tool.name)
         if blocked:
             self.ui.tool_line(tool.name, "blocked by hook")
             msg = f"Blocked by pre_tool_use hook: {blocked}"
@@ -364,7 +367,7 @@ class Agent:
             command = str(args.get("command") or "")
             if any(p.search(command) for p in DESTRUCTIVE_PATTERNS):
                 self.ui.warn(f"高危命令：{' '.join(command.split())[:100]}")
-        allowed, reason = self._authorized(tool, args)
+        allowed, reason = self._authorized(tool, args, hook_approved=hook_approved)
         if not allowed:
             self.ui.tool_line(tool.name, reason or "declined")
             return (reason or
@@ -404,13 +407,17 @@ class Agent:
             text = " ".join(b.get("text", "") for b in blocks
                             if b.get("type") == "text") or "(image)"
             self.ui.tool_result_note(text)
-            _hmsg, hout = self._run_hook("post_tool_use", {"tool": tool.name, "args": args})
+            _hmsg, hout, _ok = self._run_hook("post_tool_use",
+                                              {"tool": tool.name, "args": args},
+                                              tool_name=tool.name)
             if hout:
                 blocks.append({"type": "text", "text": f"[hook feedback] {hout[:300]}"})
             return {"blocks": blocks}, False
         result = self._maybe_summarize(tool.name, result)
         self.ui.tool_result_note(result)
-        _hmsg, hout = self._run_hook("post_tool_use", {"tool": tool.name, "args": args})
+        _hmsg, hout, _ok = self._run_hook("post_tool_use",
+                                          {"tool": tool.name, "args": args},
+                                          tool_name=tool.name)
         if hout and isinstance(result, str):
             result += f"\n[hook feedback] {hout[:300]}"
         return result, False
@@ -509,7 +516,7 @@ class Agent:
             break
         return None
 
-    def _authorized(self, tool, args: dict) -> Tuple[bool, str]:
+    def _authorized(self, tool, args: dict, hook_approved: bool = False) -> Tuple[bool, str]:
         perms = getattr(self.config, "permissions", {}) or {}
         for rule in (perms.get("deny") or []):   # deny rules are hard blocks, even in yolo
             if rule_matches(rule, tool, args):
@@ -547,6 +554,10 @@ class Agent:
             return True, ""
         if self.mode == "accept-edits" and tool.kind in WRITE_KINDS:
             return True, ""
+        # pre_tool_use hook 的 approve：只跳过标准确认——deny / 工作区锁 /
+        # 敏感路径门禁 / plan 只读在上面已全部先行判定，安全边界不变
+        if hook_approved:
+            return True, ""
         ans = self.ui.confirm(f"允许 {tool.name}？", tool.preview(args, self.ctx))
         if ans == "a":
             if tool.name == "bash":
@@ -556,28 +567,87 @@ class Agent:
             return True, ""
         return (ans == "y"), ""
 
-    def _run_hook(self, event: str, payload: dict) -> Tuple[Optional[str], str]:
-        """Run a configured hook command. Returns (error_message, stdout):
-        error_message is set when the hook failed/blocked (non-zero exit)."""
-        cmd = (getattr(self.config, "hooks", {}) or {}).get(event)
-        if not cmd:
-            return None, ""
+    def _run_hook(self, event: str, payload: dict,
+                  tool_name: str = "") -> Tuple[Optional[str], str, bool]:
+        """运行一条 hook 规则链。返回 (blocked_reason, stdout, approved)。
+
+        配置支持三种形态（向后兼容）：
+            "cmd"                              单命令，无 matcher
+            {"matcher": "Bash|edit_file", "command": "...", "timeout": 10}
+            [ 上面两种的列表 ]                  多条规则顺序执行
+
+        阻断：非零退出码（stderr 为原因）或 stdout JSON
+            {"decision": "block", "reason": "..."}
+        approve：stdout JSON {"decision": "approve"} 仅对 pre_tool_use 生效，
+            跳过标准权限确认——但 deny 规则 / 工作区锁 / 敏感路径门禁 /
+            plan 只读约束不受影响，hook 永远不能放宽安全边界。
+        带 matcher 的规则只作用于工具事件（按工具名正则，大小写不敏感）。
+        """
+        cfg = getattr(self.config, "hooks", {}) or {}
+        rules = self._hook_rules(cfg.get(event))
+        if not rules:
+            return None, "", False
         body = json.dumps({"hook": event, **payload}, ensure_ascii=False)
-        try:
-            r = subprocess.run(cmd, shell=True, input=body.encode("utf-8"),
-                               capture_output=True, timeout=30)
-        except Exception as e:
-            return f"hook failed: {e}", ""
-        try:
-            from .tools.shell import _decode
-            out = _decode(r.stdout or b"").strip()
-            err = _decode(r.stderr or b"").strip()
-        except Exception:
-            out = ""
-            err = ""
-        if r.returncode != 0:
-            return (err[:500] or out[:200] or "blocked"), out
-        return None, out
+        combined: list = []
+        approved = False
+        for rule in rules:
+            if rule["matcher"]:
+                if not tool_name or not re.search(rule["matcher"], tool_name,
+                                                  re.I):
+                    continue
+            try:
+                r = subprocess.run(rule["command"], shell=True,
+                                   input=body.encode("utf-8"),
+                                   capture_output=True, timeout=rule["timeout"])
+            except subprocess.TimeoutExpired:
+                return f"hook timeout after {rule['timeout']}s", "", False
+            except Exception as e:
+                return f"hook failed: {e}", "", False
+            try:
+                from .tools.shell import _decode
+                out = _decode(r.stdout or b"").strip()
+                err = _decode(r.stderr or b"").strip()
+            except Exception:
+                out, err = "", ""
+            if r.returncode != 0:
+                return (err[:500] or out[:200] or "blocked"), "", False
+            decision = {}
+            if out.startswith("{"):
+                try:
+                    d = json.loads(out)
+                    if isinstance(d, dict):
+                        decision = d
+                except json.JSONDecodeError:
+                    pass
+            if decision.get("decision") == "block":
+                return (str(decision.get("reason") or "blocked by hook"),
+                        "", False)
+            if decision.get("decision") == "approve" and event == "pre_tool_use":
+                approved = True
+            if out:
+                combined.append(out[:300])
+        return None, "\n".join(combined), approved
+
+    @staticmethod
+    def _hook_rules(spec) -> list:
+        if spec is None:
+            return []
+        if isinstance(spec, str):
+            return [{"matcher": None, "command": spec, "timeout": 30}]
+        rules = []
+        items = spec if isinstance(spec, list) else [spec]
+        for item in items:
+            if isinstance(item, str):
+                rules.append({"matcher": None, "command": item, "timeout": 30})
+            elif isinstance(item, dict) and item.get("command"):
+                try:
+                    timeout = max(1, int(item.get("timeout") or 30))
+                except (TypeError, ValueError):
+                    timeout = 30
+                rules.append({"matcher": item.get("matcher"),
+                              "command": str(item["command"]),
+                              "timeout": timeout})
+        return rules
 
     # ---------- compaction ----------
 
@@ -610,6 +680,8 @@ class Agent:
         return "\n\n".join(parts)
 
     def compact(self, instructions: Optional[str] = None) -> dict:
+        self._run_hook("pre_compact",
+                       {"context_tokens": self.session.context_tokens()})
         with Spinner("Compacting context"):
             stats = self.session.compact(self.provider, instructions,
                                          carry_over=self._carry_over())

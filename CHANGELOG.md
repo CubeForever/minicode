@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.18.0 (2026-09-28)
+
+生态纵深（v0.18 主题：**hooks 体系 + MCP resources/prompts + 全 shell 环境持久化 + 扩展市场**）：
+
+**hooks 事件体系扩展**
+
+- 事件从 2 个扩到 8 个：`session_start` / `user_prompt_submit` / `pre_tool_use` / `post_tool_use` / `stop` / `subagent_stop` / `pre_compact` / `turn_end`
+- 配置支持多规则 + matcher：`"hooks": {"pre_tool_use": [{"matcher": "Bash|edit_file", "command": "...", "timeout": 10}]}`（字符串旧格式完全兼容；matcher 按工具名正则，仅作用于工具事件；每规则可配 timeout）
+- JSON 决策协议：hook stdout 输出 `{"decision": "block", "reason": "…"}` 即阻断（reason 反馈给模型自动改道）；`{"decision": "approve"}` 对 pre_tool_use 跳过标准权限确认——**deny 规则 / 工作区锁 / 敏感路径门禁 / plan 只读不受影响，hook 永远不能放宽安全边界**（有专项测试锁定该语义）
+
+**MCP resources / prompts 支持**
+
+- resources → 只读工具 `mcp__<server>__get__<name>`（每服务器上限 20 个），模型可直接读取服务器资源
+- prompts → `/prompt <服务器> <提示名> [键=值 …]` 调用并发起回合（终端与 Web 一致）
+- 能力声明按「键存在性」判定——服务器以空对象 `{}` 声明支持，真值判定会误判为不支持（实测抓到的 bug）；`/mcp` 状态显示资源与 prompt 数量
+
+**持久 shell：PowerShell / cmd 适配**
+
+- 环境持久化从 bash 扩展到全部三种 shell：PowerShell（`$env:` 重放 + `Get-ChildItem Env:` 转储）、cmd（`set` 重放 + `set` 转储）
+- cmd 的引号会破坏 `/V:ON` 延迟展开——值不加引号、逐字符 `^` 转义（含空格）、`&` 紧贴值尾避免尾随空格并进值、含 `%`/`"` 的值跳过
+- 多行值在行式转储中无法安全回传，自动跳过；bash 的 base64/NUL 管道不变
+
+**扩展市场索引**
+
+- `minicode --market` / `/market` 列出可安装扩展包（名称/版本/描述/来源）
+- `minicode --install <包名>` 自动从市场解析安装源；索引源来自用户级 `marketplaces` 配置（缺省内置社区索引，支持本地路径自建）
+- 安全：项目级 `marketplaces` 属受限键（可重定向安装源，必须过信任门禁）；市场只回答「有什么、从哪装」——安装与执行仍走既有信任体系
+
+测试 304 → **321 项**（新增 test_v018_ecosystem.py：matcher/JSON 协议/approve 不越 deny/stop 与 pre_compact 触发、cmd 与 PowerShell 环境往返、MCP resources/prompts 端到端、市场列表/按名安装/受限键）。
+
+
 ## 0.17.0 (2026-09-28)
 
 模型故障转移与缓存可观测（v0.17 主题：**Failover + Cache Insight**）：

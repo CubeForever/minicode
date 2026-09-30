@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.17.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 304 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.18.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 321 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -91,6 +91,24 @@ minicode --install ./my-pack --user                           # 装到用户级
 ```
 
 包内按约定目录发现：`skills/`（含 SKILL.md 的子目录）、`commands/*.md`、`agents/*.md`、`tools/*.py`；也可在包根放 `minicode.json` manifest 显式声明。安全边界与手工复制一致：安装只复制文件，插件首次加载强制确认，manifest 携带的 MCP 服务器不会自动安装。
+
+### 扩展市场（--market）
+
+`minicode --market` / REPL 里 `/market` 浏览可安装扩展包（名称/版本/描述/来源），`minicode --install <包名>` 自动从市场解析安装源。索引源由 `~/.minicode.json` 的 `"marketplaces"` 列表配置（缺省内置社区索引，支持本地路径自建）；市场只提供目录，安装与执行仍走完整信任体系。
+
+### Hooks（自动化护栏）
+
+在配置里挂钩子，在关键节点自动执行你的命令（shell 执行，stdin 收到 JSON 事件）：
+
+```json
+{"hooks": {
+  "pre_tool_use": [{"matcher": "Bash", "command": "my-guard.py", "timeout": 10}],
+  "stop": "notify-done.sh",
+  "pre_compact": "log-compact.sh"
+}}
+```
+
+支持 8 个事件：`session_start` / `user_prompt_submit` / `pre_tool_use` / `post_tool_use` / `stop` / `subagent_stop` / `pre_compact` / `turn_end`。`matcher` 按工具名正则过滤（仅工具事件）；命令退出码非 0 或输出 `{"decision": "block", "reason": "…"}` 即阻断并把 reason 反馈给模型自动改道；pre_tool_use 可输出 `{"decision": "approve"}` 跳过标准确认——但 deny 规则、敏感路径门禁与 plan 只读不受影响，hook 永远不能放宽安全边界。
 
 ### Web 界面（`--ui`）
 
@@ -204,7 +222,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 304 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 321 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

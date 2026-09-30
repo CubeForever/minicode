@@ -198,6 +198,8 @@ class WebUIServer:
         self.agent = _build_agent(cfg, provider, session or Session(),
                                   self.bridge, mcp_manager)
         self.bridge._stop_check = lambda: self.agent.interrupt_event.is_set()
+        self.agent._run_hook("session_start",
+                             {"cwd": str(self.cfg.cwd), "resumed": False})
         self.host = host
         self.busy = False
         self.token = secrets.token_hex(16)
@@ -842,6 +844,34 @@ class WebUIServer:
             if agent.mcp is None:
                 return {"output": "未配置 MCP。"}
             return {"output": "\n".join(agent.mcp.status_lines())}
+        if name == "prompt":
+            if agent.mcp is None:
+                return {"error": "未配置 MCP。"}
+            parts = arg.split()
+            if len(parts) < 2:
+                return {"error": "用法：/prompt <服务器> <提示名> [键=值 ...]"}
+            server, pname = parts[0], parts[1]
+            client = agent.mcp.clients.get(server)
+            if client is None:
+                return {"error": f"未知 MCP 服务器：{server}"}
+            arguments = {}
+            for kv in parts[2:]:
+                if "=" in kv:
+                    k, _, v = kv.partition("=")
+                    arguments[k] = v
+            try:
+                text = client.get_prompt(pname, arguments)
+            except Exception as e:
+                return {"error": f"prompt 获取失败：{e}"}
+            if not text:
+                return {"error": "prompt 为空。"}
+            return {"turn": text}
+        if name == "market":
+            from . import market as _market
+            packs, errors = _market.list_packs(agent.config)
+            out = ["⚠ " + e for e in errors]
+            out.append(_market.format_market(packs))
+            return {"output": "\n".join(out)}
         if name == "model":
             if arg:
                 cfg.model = arg
@@ -924,9 +954,9 @@ class WebUIServer:
             return {"output": "\n".join(
                 "/mode /undo /rewind /diff /limit /reasoning /cost /context "
                 "/tools /todos /brain /memory /export /transcript /plans "
-                "/agents /skills /mcp /model /models /add-dir /verify "
-                "/init /commit /pr /review /help —— /init /commit /pr /review "
-                "会发起一个回合；!cmd 直通本地执行")}
+                "/agents /skills /mcp /prompt /market /model /models /add-dir "
+                "/verify /init /commit /pr /review /help —— /init /commit /pr "
+                "/review 会发起一个回合；!cmd 直通本地执行")}
         if name in ("init", "commit", "pr", "review"):
             prompts = {"init": INIT_PROMPT,
                        "commit": COMMIT_PROMPT.format(files_hint="", extra=""),

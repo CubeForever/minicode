@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -25,6 +26,8 @@ from .tools.base import Tool, ToolError
 PROTOCOL_VERSION = "2025-06-18"
 LEGACY_PROTOCOL_VERSION = "2024-11-05"
 DEFAULT_TIMEOUT = 30
+MAX_RESOURCES_PER_SERVER = 20
+MAX_PROMPTS_PER_SERVER = 30
 
 
 def _version() -> str:
@@ -48,6 +51,10 @@ class McpClient:
         self.status = "not started"
         self.error = ""
         self.tools: List[dict] = []
+        self.resources: List[dict] = []
+        self.prompts: List[dict] = []
+        self.server_info: dict = {}
+        self.server_capabilities: dict = {}
         self._id = 0
         try:
             self.timeout = max(1, int(self.cfg.get("timeout") or DEFAULT_TIMEOUT))
@@ -89,6 +96,8 @@ class McpClient:
             self.notify("notifications/initialized", {})
             result = self.request("tools/list", {}) or {}
             self.tools = result.get("tools") or []
+            self.resources = self._try_list(self._list_resources)
+            self.prompts = self._try_list(self._list_prompts)
             self.status = "connected"
             return True
         except Exception as e:
@@ -97,14 +106,58 @@ class McpClient:
             self.stop()
             return False
 
+    @staticmethod
+    def _try_list(fn) -> list:
+        try:
+            return fn()
+        except McpError:
+            return []   # 声明了能力但列取失败：不阻塞连接
+
     def _initialize(self, protocol_version: str) -> bool:
         try:
-            self.request("initialize", {
+            result = self.request("initialize", {
                 "protocolVersion": protocol_version, "capabilities": {},
                 "clientInfo": {"name": "minicode", "version": _version()}})
+            self.server_info = result or {}
+            self.server_capabilities = (result or {}).get("capabilities") or {}
             return True
         except McpError:
             return False
+
+    # ---------- resources / prompts ----------
+
+    def _list_resources(self) -> list:
+        # 服务器以空对象 {} 声明"支持"——必须检查键存在性而非真值
+        if "resources" not in self.server_capabilities:
+            return []
+        res = self.request("resources/list", {}) or {}
+        return [r for r in (res.get("resources") or []) if isinstance(r, dict)]
+
+    def _list_prompts(self) -> list:
+        if "prompts" not in self.server_capabilities:
+            return []
+        res = self.request("prompts/list", {}) or {}
+        return [p for p in (res.get("prompts") or []) if isinstance(p, dict)]
+
+    def read_resource(self, uri: str) -> str:
+        res = self.request("resources/read", {"uri": uri}) or {}
+        parts = res.get("contents") or []
+        texts = [p.get("text", "") for p in parts if isinstance(p, dict)
+                 and p.get("type") == "text"]
+        return "\n".join(t for t in texts if t) or "(empty resource)"
+
+    def get_prompt(self, name: str, arguments: Optional[dict] = None) -> str:
+        res = self.request("prompts/get",
+                           {"name": name, "arguments": arguments or {}}) or {}
+        texts: List[str] = []
+        for m in res.get("messages") or []:
+            c = m.get("content") if isinstance(m, dict) else None
+            if isinstance(c, dict) and c.get("type") == "text":
+                texts.append(c.get("text", ""))
+            elif isinstance(c, list):
+                texts += [b.get("text", "") for b in c
+                          if isinstance(b, dict) and b.get("type") == "text"]
+        return "\n\n".join(t for t in texts if t)
 
     def _start_reader(self):
         """stdout 读线程：服务器挂起时 request() 按超时返回，而不是永远阻塞。"""
@@ -246,12 +299,16 @@ class McpClient:
 
     def _start_http(self) -> bool:
         try:
-            self._http_rpc("initialize", {
-                "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                "clientInfo": {"name": "minicode", "version": _version()}})
+            if not self._initialize(PROTOCOL_VERSION):
+                self.status = "failed"
+                self.error = "initialize failed"
+                self.stop()
+                return False
             self.notify("notifications/initialized", {})
             listing = self.request("tools/list", {}) or {}
             self.tools = listing.get("tools") or []
+            self.resources = self._try_list(self._list_resources)
+            self.prompts = self._try_list(self._list_prompts)
             self.status = "connected"
             return True
         except Exception as e:
@@ -291,6 +348,27 @@ class McpTool(Tool):
         return self._client.call(self._tool_name, args)
 
 
+class McpResourceTool(Tool):
+    """MCP resource exposed as a read-only tool: `mcp__<server>__get__<name>`."""
+    kind = "read"
+
+    def __init__(self, client: "McpClient", uri: str, slug: str, meta: dict):
+        self._client = client
+        self._uri = uri
+        self.name = f"mcp__{client.name}__get__{slug}"
+        desc = (meta.get("description") or meta.get("mimeType")
+                or "MCP resource")
+        self.description = (f"[MCP:{client.name}] Read resource "
+                            f"'{meta.get('name') or uri}': {desc}").strip()[:300]
+        self.input_schema = {"type": "object", "properties": {}}
+
+    def describe_call(self, args: dict) -> str:
+        return str(self._uri)
+
+    def run(self, args: dict, ctx) -> str:
+        return self._client.read_resource(self._uri)
+
+
 class McpManager:
     """Owns all configured servers; connect_all() returns usable tools."""
 
@@ -303,10 +381,16 @@ class McpManager:
     def connect_all(self) -> List[Tool]:
         tools: List[Tool] = []
         for client in self.clients.values():
-            if client.start():
-                for schema in client.tools:
-                    if isinstance(schema, dict) and schema.get("name"):
-                        tools.append(McpTool(client, schema["name"], schema))
+            if not client.start():
+                continue
+            for schema in client.tools:
+                if isinstance(schema, dict) and schema.get("name"):
+                    tools.append(McpTool(client, schema["name"], schema))
+            for i, res in enumerate((client.resources or [])[:MAX_RESOURCES_PER_SERVER]):
+                slug = re.sub(r"[^A-Za-z0-9_\-]", "_",
+                              str(res.get("name") or res.get("uri") or f"res{i}"))[:48]
+                tools.append(McpResourceTool(client, str(res.get("uri") or ""),
+                                             slug, res))
         return tools
 
     def stop_all(self):
@@ -322,4 +406,10 @@ class McpManager:
             if c.status == "connected":
                 for t in c.tools:
                     lines.append(f"    · mcp__{name}__{t.get('name')}")
+                if c.resources:
+                    lines.append(f"    · {len(c.resources)} resources"
+                                 f"（mcp__{name}__get__* 只读工具）")
+                if c.prompts:
+                    lines.append(f"    · {len(c.prompts)} prompts"
+                                 f"（/prompt {name} <名称> [键=值] 调用）")
         return lines or ["  （未配置 mcpServers）"]

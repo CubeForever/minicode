@@ -104,6 +104,8 @@ def _parse_args(argv=None):
     ap.add_argument("--user", action="store_true",
                     help="配合 --install：装入 ~/.minicode 而非项目 .minicode")
     ap.add_argument("--force", action="store_true", help="配合 --install：覆盖同名扩展")
+    ap.add_argument("--market", action="store_true",
+                    help="列出扩展市场里可安装的包后退出")
     ap.add_argument("--cwd", help="工作目录")
     ap.add_argument("--version", action="version", version=f"minicode {__version__}")
     return ap.parse_args(argv)
@@ -291,7 +293,11 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
         sub.ctx = ToolContext(cwd=cfg.cwd, config=cfg, session=sub_session,
                               ui=sub_ui, agent_factory=None)
         sub.system_prompt = sub_system
-        return sub.run_turn(prompt)
+        result = sub.run_turn(prompt)
+        agent._run_hook("subagent_stop",
+                        {"subagent": subagent_type or "default",
+                         "prompt_chars": len(prompt)})
+        return result
 
     agent = Agent(provider, session, ui, cfg, ToolRegistry(base_tools),
                   checkpoints=CheckpointManager(ckpt_root))
@@ -344,11 +350,11 @@ def _after_turn(agent: Agent) -> None:
             agent.compact()
         except (LLMError, RuntimeError) as e:
             ui.error(f"压缩失败：{e}")
-    _hmsg, _hout = agent._run_hook("turn_end", {"messages": len(s.messages)})
+    _hmsg, _hout, _ok = agent._run_hook("turn_end", {"messages": len(s.messages)})
 
 
 def _run_turn(agent: Agent, text: str) -> str:
-    blocked, _hout = agent._run_hook("user_prompt_submit", {"prompt": text})
+    blocked, _hout, _ok = agent._run_hook("user_prompt_submit", {"prompt": text})
     if blocked:
         agent.ui.warn(f"user_prompt_submit hook 拦截了该提示词：{blocked}")
         return "blocked"
@@ -365,6 +371,8 @@ def _run_turn(agent: Agent, text: str) -> str:
     except Exception as e:  # keep the REPL alive on unexpected errors
         agent.ui.error(f"{type(e).__name__}: {e}")
         status = "error"
+    if status == "ok":
+        agent._run_hook("stop", {"messages": len(agent.session.messages)})
     _after_turn(agent)
     _postmortem(agent, status)
     if status == "ok":
@@ -1035,6 +1043,38 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                 ui.plain(ln)
         else:
             ui.warn("未配置 MCP。")
+    elif name == "/prompt":
+        # /prompt <服务器> <提示名> [键=值 ...] —— 调用 MCP prompt 发起回合
+        if agent.mcp is None:
+            ui.warn("未配置 MCP。")
+        else:
+            parts = arg.split()
+            if len(parts) < 2:
+                ui.error("用法：/prompt <服务器> <提示名> [键=值 ...]（/mcp 查看可用）")
+            else:
+                server, pname = parts[0], parts[1]
+                client = agent.mcp.clients.get(server)
+                if client is None:
+                    ui.error(f"未知 MCP 服务器：{server}")
+                else:
+                    arguments = {}
+                    for kv in parts[2:]:
+                        if "=" in kv:
+                            k, _, v = kv.partition("=")
+                            arguments[k] = v
+                    try:
+                        text = client.get_prompt(pname, arguments)
+                    except Exception as e:
+                        text = ""
+                        ui.error(f"prompt 获取失败：{e}")
+                    if text:
+                        _run_turn(agent, text)
+    elif name == "/market":
+        from . import market as _market
+        packs, errors = _market.list_packs(agent.config)
+        for e in errors:
+            ui.warn(e)
+        ui.plain(_market.format_market(packs))
     elif name == "/add-dir":
         if not arg:
             ui.error("用法：/add-dir <目录>")
@@ -1210,11 +1250,30 @@ def main(argv=None) -> int:
             return 2
     cwd = Path.cwd()
     ui = UI()
-    if getattr(args, "install", None):
-        # 安装不需要 API 配置——放在 load_config 之前，没配 key 也能装扩展
+    if getattr(args, "install", None) or getattr(args, "market", False):
+        # 安装/浏览市场不需要 API 配置——放在 load_config 之前
+        from types import SimpleNamespace
+        from . import market
+        from .config import USER_CONFIG, _read_json
         from .install import InstallError, format_report, install_pack
+        if getattr(args, "market", False):
+            urls = (list(_read_json(USER_CONFIG).get("marketplaces") or [])
+                    or list(market.DEFAULT_MARKETPLACES))
+            packs, errors = market.list_packs(SimpleNamespace(marketplaces=urls))
+            for e in errors:
+                ui.warn(e)
+            ui.plain(market.format_market(packs))
+            return 0
+        source = args.install
+        if not Path(source).expanduser().exists() and not source.endswith(".git")                 and not source.startswith(("http://", "https://", "git@", "ssh://")):
+            hit = market.resolve_from_user_config(source)
+            if hit is None:
+                ui.error(f"{source!r} 不是本地目录 / git 地址，市场里也没有这个包名")
+                return 1
+            ui.info(f"已从市场解析：{hit['name']} → {hit['source']}")
+            source = hit["source"]
         try:
-            report = install_pack(args.install, cwd, user=args.user,
+            report = install_pack(source, cwd, user=args.user,
                                   force=args.force)
             ui.plain(format_report(report))
             if report["installed"]:
@@ -1355,6 +1414,7 @@ def main(argv=None) -> int:
         resumed = _resume(agent, ui)
     if resumed:
         _maybe_resume_tasks(agent, ui)
+    agent._run_hook("session_start", {"cwd": str(cwd), "resumed": resumed})
     if args.prompt:
         _run_turn(agent, " ".join(args.prompt))
         if cfg.mode == "plan":
@@ -1367,7 +1427,8 @@ def main(argv=None) -> int:
                      "/brain", "/verify", "/todos", "/agents", "/mcp", "/add-dir",
                      "/transcript", "/output-style", "/doctor", "/tools", "/status",
                      "/resume", "/export", "/init", "/plans", "/stats", "/commit",
-                     "/pr", "/copy", "/limit", "/skills", "/exit"]
+                     "/pr", "/copy", "/limit", "/skills", "/prompt", "/market",
+                     "/exit"]
     command_names += ["/" + n for n in _custom_commands()]
 
     turn_no = 0
