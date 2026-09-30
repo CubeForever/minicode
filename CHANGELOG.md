@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.18.0 (2026-09-28)
+## 0.18.0 (2026-09-30)
 
 生态纵深（v0.18 主题：**hooks 体系 + MCP resources/prompts + 全 shell 环境持久化 + 扩展市场**）：
 

@@ -1,6 +1,6 @@
 # 参与贡献 minicode
 
-感谢你愿意让这个项目变得更好！minicode 刻意保持**零第三方依赖**和**小而清晰的代码库**（核心约 8100 行），任何人都能读完整个实现。这份文档帮你找到最合适的贡献方式。
+感谢你愿意让这个项目变得更好！minicode 刻意保持**零第三方依赖**和**小而清晰的代码库**（核心约 10100 行），任何人都能读完整个实现。这份文档帮你找到最合适的贡献方式。
 
 ## 环境搭建
 
@@ -17,15 +17,22 @@ MINICODE_FAKE_LLM=demo python -m minicode -p hi --yolo
 
 ```
 minicode/
-├── cli.py        入口：REPL、斜杠命令、自定义命令/子智能体加载
-├── agent.py      主循环：模型⇄工具、权限/门禁/hooks/检查点/计划模式
-├── llm.py        多模型适配层 ★ 新端点怪癖都修在这里
-├── session.py    会话/压缩/持久化
-├── tools/        每个工具一个类（fs/shell/webfetch/panel/...）
+├── cli.py        入口：REPL、斜杠命令、回合排队、自定义命令/子智能体加载
+├── agent.py      主循环：模型⇄工具、权限/门禁/hooks/检查点/计划模式/协作式中断
+├── llm.py        多模型适配层 ★ 新端点怪癖都修在这里；故障转移（FailoverProvider）
+├── session.py    会话/压缩/持久化/用量与缓存统计
+├── tools/        每个工具一个类（fs/shell/webfetch/panel/...，共 21 个）
 ├── guard.py      敏感路径门禁
-├── ui.py         终端渲染（语义色板：青=动作 黄=警 红=错 灰=元信息）
+├── ui.py         终端渲染（Markdown/语义色板：青=动作 黄=警 红=错 灰=元信息）
+├── lineinput.py  行编辑（readline / 括号粘贴 / 历史落盘）
+├── winedit.py    Windows 原生行编辑器（msvcrt）
+├── watcher.py    回合键盘监听（Esc 中断 / 消息排队）
 ├── plugins.py    本地插件加载
-├── mcp.py        MCP stdio + streamable HTTP
+├── install.py    扩展包安装（git / 本地目录）
+├── market.py     扩展市场索引（只读）
+├── mcp.py        MCP stdio + streamable HTTP（tools/resources/prompts）
+├── webui.py      Web 界面后端（SSE + 浏览器内确认 + cookie 鉴权）
+├── web/          前端静态资源（原生 HTML/CSS/JS）
 └── server.py     serve 本地 API
 ```
 

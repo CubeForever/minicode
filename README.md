@@ -11,19 +11,19 @@
 - **终端原生 Markdown 渲染**：回复按结构渲染——标题、列表（含任务框）、引用、分隔线、行内样式，GFM 表格按 CJK 显示宽度对齐；零依赖实现，无色模式内容逐字不丢
 - **并行多子智能体**：`dispatch_agents` 一次分派 2-6 个独立调研任务并行执行（独立 cwd/env 隔离），单任务失败不影响其他；配合自定义子智能体（.minicode/agents/*.md）按角色分工
 - **浏览器 Web 界面**：`minicode --ui` 一条命令在浏览器里获得桌面级体验——JOB TICKET 工单设计语言（明暗双主题）、回合编号与状态戳、工具调用执行日志、深度思考折叠面板、权限签核按钮、停止按钮、分页签扩展管理（仍是零依赖：标准库 HTTP 服务 + 原生前端，无 Node/构建链）
-- **21 个内置工具**：文件读写编辑（先读后改硬性强制）、多文件补丁（apply_patch）、Jupyter 编辑、glob/grep/list 搜索、bash（后台进程管理，export/venv 激活跨调用持久）、单/并行事智能体、三视角圆桌、网页抓取/搜索、交互提问、任务清单
+- **21 个内置工具**：文件读写编辑（先读后改硬性强制）、多文件补丁（apply_patch）、Jupyter 编辑、glob/grep/list 搜索、bash / PowerShell / cmd（后台进程管理，环境变量跨调用持久）、单/并行事智能体、三视角圆桌、网页抓取/搜索、交互提问、任务清单
 - **四种权限模式**：`default`（写操作逐个确认）→ `accept-edits`（自动接受编辑）→ `plan`（只读调研出计划，批准后实施）→ `full-access`（全自动，仅高危操作需确认）
 - **跨会话记忆**：项目大脑自动沉淀事实/坑/决策/失败教训，失败回合自动复盘入脑，越用越懂你的项目
 - **自检门禁**：`/verify pytest -q` 后每次改动自动跑验收命令，失败自动修复（最多两轮）
 - **多模型适配层**：429 退避、思考模型回传、参数垫片、非流式回退、工具调用格式归一化——OpenAI 兼容端与 Anthropic 同一套鲁棒性语义；`think/ultrathink` 关键词落地生效、缓存命中可见。换任意端点先跑 `--probe` 诊断
 - **模型故障转移**：`fallbacks` 配置备用模型链，主模型连接失败/限速耗尽/不支持工具时自动切换继续同一回合（可跨厂商，切换实时提示，部分输出绝不重放）
-- **平台化**：`serve` 本地 HTTP API、本地 Python 插件目录、MCP（stdio + HTTP）、自定义命令/子智能体/技能、headless JSON 输出
+- **平台化**：`serve` 本地 HTTP API、本地 Python 插件目录、MCP（stdio + HTTP，含 resources/prompts）、hooks 护栏、扩展市场、自定义命令/子智能体/技能、headless JSON 输出
 - **工程保险**：文件检查点（/undo /rewind）、会话持久化、上下文自动压缩（默认 1M，/limit 自定义）、敏感路径门禁、SSRF 防护
 - **智能体行为优化**：工具结果按类型智能摘要（大文件按行折叠/grep 按文件分组/bash 保留错误行）、工具失败自动归因并给出修正建议、同类错误连续 3 次强制换策略、上下文压缩按工具重要性区分保留比例（写操作比读操作保留更多）
 
 ## 优势
 
-- **零依赖、全部可读**：核心约 5800 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
+- **零依赖、全部可读**：核心约 10100 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
 - **不锁定模型**：一个环境变量切换 GLM / DeepSeek / Claude / 本地 Ollama；兼容层在真实中转站联调中打磨，新端点的怪癖大多自动消化
 - **安全边界内建**：敏感路径强制确认（yolo 也不放行）、SSRF 封禁、第三方插件/钩子/项目受限配置首次信任确认（内容变更后重新询问）、危险命令告警
 - **三项独创**（Claude Code / Codex 均无）：项目大脑（Brain）、自检回路（Verify Gate）、圆桌模式（Panel）
@@ -122,7 +122,7 @@ minicode --install ./my-pack --user                           # 装到用户级
 | 流式聊天 | 回复逐字渲染（终端方块光标）、思考面板（等宽计时 + 折叠）、Markdown/表格/代码块复制 |
 | 执行日志 | 工具调用按时间轴排布，等宽芯片 + 可展开输出，错误自动归因可见 |
 | 浏览器内确认 | 写文件/命令的 `允许 / 本次总是 / 拒绝` 与 ask_user 选项直接在页面点选 |
-| 终端命令平移 | 输入框直接用 `/命令`（27 条）与 `!命令` 直通；/init /commit /pr 自动转回合；计划一键批准实施 |
+| 终端命令平移 | 输入框直接用 `/命令`（28 条）与 `!命令` 直通；/init /commit /pr 自动转回合；计划一键批准实施 |
 | 状态栏 | IDE 式底部栏：连接态、权限模式切换、token 用量实时显示 |
 
 安全边界与 `serve` 模式相同：仅绑定 127.0.0.1、HttpOnly cookie 鉴权（首访经 `?token=` 链接种下，SameSite=Strict 防 CSRF）、Host 校验防 DNS rebinding、页面与静态资源零凭据；不要暴露公网。
@@ -177,7 +177,7 @@ minicode --install ./my-pack --user                           # 装到用户级
 
 ### 斜杠命令
 
-`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/copy` `/exit`
+`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/copy` `/exit`
 
 ### 自定义扩展
 
@@ -197,21 +197,23 @@ minicode --install ./my-pack --user                           # 装到用户级
 
 ```text
 minicode/
-├── cli.py          REPL / 斜杠命令 / 计划批准门
-├── agent.py        主循环：权限、门禁、hooks、检查点、思考预算
-├── llm.py          双协议适配 + SSE 归一化 + 重试 + 缓存
+├── cli.py          REPL / 斜杠命令 / 计划批准门 / 回合排队
+├── agent.py        主循环：权限、门禁、hooks、检查点、思考预算、协作式中断
+├── llm.py          双协议适配 + SSE 归一化 + 重试 + 故障转移 + 缓存
 ├── config.py       配置加载 / profiles / 权限合并 / MCP 配置
-├── mcp.py          MCP 客户端（stdio / HTTP）
+├── mcp.py          MCP 客户端（stdio / HTTP，tools + resources + prompts）
 ├── session.py      会话 / 压缩 / 持久化
 ├── checkpoints.py  文件检查点（undo / rewind）
 ├── guard.py        敏感路径门禁
 ├── prompts.py      系统提示词（注入防御 / Git 护栏）
 ├── plugins.py      本地插件加载
+├── install.py      扩展包安装（git / 本地目录 → .minicode）
+├── market.py       扩展市场索引（只读目录）
 ├── plans.py        计划存档管理
 ├── server.py       serve 模式（headless 本地 HTTP API）
-├── webui.py        Web 界面（SSE 事件流 + 浏览器内确认）
+├── webui.py        Web 界面（SSE 事件流 + 浏览器内确认 + cookie 鉴权）
 ├── web/            前端静态资源（原生 HTML/CSS/JS，零构建）
-├── ui.py           终端渲染 / 余量条 / 确认框
+├── ui.py           终端渲染 / Markdown / 余量条 / 确认框
 ├── lineinput.py    行编辑（readline / Windows 原生编辑器 + 历史落盘）
 ├── winedit.py      Windows 行编辑器（msvcrt，零依赖）
 ├── watcher.py      回合键盘监听（Esc 中断 / 消息排队）

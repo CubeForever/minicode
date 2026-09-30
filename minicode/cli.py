@@ -702,6 +702,8 @@ HELP_SECTIONS = [
                   ("/pr [base]", "生成/创建 PR"), ("/plans", "存档计划管理"),
                   ("/agents", "子智能体列表"), ("/skills", "工作流技能列表"),
                   ("/mcp", "MCP 服务器状态"),
+                  ("/prompt <服务器> <名>", "调用 MCP prompt 发起回合"),
+                  ("/market", "扩展市场目录"),
                   ("/add-dir <目录>", "授权额外目录")]),
     ("系统", [("/tools", "工具列表"), ("/status", "当前状态"), ("/output-style", "输出风格"),
              ("/doctor", "环境自检"), ("/help", "本帮助"), ("/exit", "退出（Ctrl+D）")]),
