@@ -181,8 +181,12 @@ def test_cmd_env_persists_across_calls(tmp_path):
     from minicode.tools.base import ToolContext
     ctx = ToolContext(cwd=tmp_path, config=Config(), session=Session(), ui=UI())
     tool.run({"command": "set MINI_T=hello"}, ctx)
+    bl = st._env_baseline or {}
     out = tool.run({"command": "echo !MINI_T!"}, ctx)
-    assert "hello" in out
+    assert "hello" in out, (
+        f"baseline_vars={len(bl)} overrides={list(st._env_overrides)[:8]}"
+        f" n_overrides={len(st._env_overrides)} out={out[:160]!r}"
+        f" sample_baseline={sorted(bl)[:6]}")
 
 
 @pytest.mark.skipif(not (shutil.which("powershell") or shutil.which("pwsh")),
