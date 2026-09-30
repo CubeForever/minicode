@@ -34,7 +34,9 @@ jobs:
             echo "python: $(python --version 2>&1); stdout-enc: $(python -X utf8 -c 'import sys; print(sys.stdout.encoding)')"
             echo "pip: $(pip list 2>/dev/null | grep -iE 'pytest|cov|coverage' | tr '\n' '|')"
           } > dbg.txt
-          tail -n 80 pytest.log >> dbg.txt 2>/dev/null || echo "(no pytest.log)" >> dbg.txt
+          tail -n 40 pytest.log >> dbg.txt 2>/dev/null || echo "(no pytest.log)" >> dbg.txt
+          # 崩溃式失败（无失败摘要）时用 -v 重跑，定位卡死的用例
+          python -X utf8 -m pytest tests -v -x --tb=short -p no:cacheprovider 2>&1 | tail -n 60 >> dbg.txt || true
           flat=$(tr '\n' '|' < dbg.txt | sed 's/%/%25/g')
           echo "$flat" | fold -w 380 > dbg-chunks.txt
           n=0
