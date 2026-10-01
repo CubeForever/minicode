@@ -349,6 +349,21 @@ function attachResult(text) {
   scrollDown();
 }
 
+function attachDiff(text) {                  // 自动编辑后的紧凑 diff（着色复用 .dline）
+  if (!text) return;
+  hideHero();
+  if (!ticket) { sysLine("plain", text); return; }
+  const cards = ticket.body.querySelectorAll(".tool-card");
+  const t = cards.length ? cards[cards.length - 1] : null;
+  const box = el("div", "diff-view tool-diff");
+  box.innerHTML = String(text).split("\n").map(ln => {
+    const cls = /^\s*\+/.test(ln) ? " add" : (/^\s*-/.test(ln) ? " del" : "");
+    return `<span class="dline${cls}">${esc(ln) || " "}</span>`;
+  }).join("");
+  (t || ticket.body).appendChild(box);
+  scrollDown();
+}
+
 /* ---------------- 系统行 / todos ---------------- */
 function sysLine(kind, text) {
   if (!text) return;
@@ -568,6 +583,7 @@ function connectEvents() {
       case "reason": streamReason(e.text); break;
       case "tool": addTool(e.name, e.summary); break;
       case "result": attachResult(e.text); break;
+      case "diff": attachDiff(e.text); break;
       case "info": sysLine("info", e.text); break;
       case "warn": sysLine("warn", e.text); break;
       case "error": sysLine("error", e.text); announce("错误：" + e.text); if (ticket) ticket.err = true; break;

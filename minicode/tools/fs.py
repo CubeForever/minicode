@@ -222,24 +222,28 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     name = "edit_file"
     kind = "write"
-    description = ("Exact string replacement in a file. old_string must match uniquely "
+    description = ("String replacement in a file. old_string should match uniquely "
                    "(include enough surrounding context); set replace_all=true to replace "
-                   "every occurrence. The file must have been read with read_file first "
-                   "(read-before-edit is enforced).")
+                   "every occurrence. If the exact text doesn't match, whitespace-flexible "
+                   "and fuzzy matching are attempted automatically. Optional line= (1-based, "
+                   "from read_file output) disambiguates locations. The file must have been "
+                   "read with read_file first (read-before-edit is enforced).")
     input_schema = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "File path."},
-            "old_string": {"type": "string", "description": "Exact text to replace."},
+            "old_string": {"type": "string", "description": "Text to replace."},
             "new_string": {"type": "string", "description": "Replacement text ('' deletes)."},
             "replace_all": {"type": "boolean", "description": "Replace all occurrences (default false)."},
+            "line": {"type": "integer", "description": "1-based line number where old_string starts (helps disambiguate)."},
         },
         "required": ["path", "old_string", "new_string"],
     }
 
     def describe_call(self, args: dict) -> str:
         ra = " (replace_all)" if args.get("replace_all") else ""
-        return f"{args.get('path')}{ra}"
+        ln = f" @L{args['line']}" if args.get("line") else ""
+        return f"{args.get('path')}{ra}{ln}"
 
     def mutated_path(self, args: dict, ctx: ToolContext):
         return _resolve(ctx, str(args.get("path") or ""))
@@ -270,22 +274,161 @@ class EditFileTool(Tool):
             raise ToolError("old_string and new_string are identical")
         _require_read(ctx, p, "edit_file")   # 硬性 read-before-edit
         text, newline = _read_text_normalized(p)
-        count = text.count(old)
-        if count == 0:
-            raise ToolError("old_string not found — re-read the file and copy the exact "
-                            "text including whitespace/indentation")
         replace_all = bool(args.get("replace_all"))
-        if count > 1 and not replace_all:
-            raise ToolError(f"old_string matches {count} locations; add more surrounding "
-                            f"context or pass replace_all=true")
-        updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+        line_hint = None
+        if args.get("line") not in (None, ""):
+            try:
+                line_hint = int(args.get("line"))
+            except (TypeError, ValueError):
+                line_hint = None
+
+        count = text.count(old)
+        if count == 1 or (count > 1 and replace_all):
+            updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+            n, how = (count, "exact") if replace_all else (1, "exact")
+        elif count > 1:
+            # 多处命中：line 提示可以消歧（取离提示行最近的命中）
+            if line_hint is None:
+                raise ToolError(f"old_string matches {count} locations; add more "
+                                f"surrounding context, pass replace_all=true, "
+                                f"or add line= (1-based from read_file)")
+            positions = []
+            start = text.find(old)
+            while start != -1:
+                positions.append((start, text.count("\n", 0, start)))
+                start = text.find(old, start + 1)
+            start = min(positions, key=lambda t: abs(t[1] - (line_hint - 1)))[0]
+            updated = text[:start] + new + text[start + len(old):]
+            n, how = 1, "exact (disambiguated by line)"
+        else:
+            res = _flexible_replace(text, old, new, replace_all, line_hint)
+            if res[0] == "ok":
+                updated, n, how = res[1], res[2], res[3]
+            elif res[0] == "ambiguous":
+                lines_show = ", ".join(str(i + 1) for i in res[1][:5])
+                raise ToolError(f"old_string matched {len(res[1])} regions loosely "
+                                f"(lines {lines_show}); add more surrounding context "
+                                f"or pass line= to pick one")
+            else:
+                file_lines = text.split("\n")
+                nearest = _nearest_summary(file_lines, _split_lines_nl(old))
+                raise ToolError("old_string not found (whitespace-flexible and fuzzy "
+                                f"matching also tried). Closest region(s): {nearest}. "
+                                "Re-read the file and copy the exact text including "
+                                "whitespace/indentation, or pass line=.")
         try:
             _write_text_nl(p, updated, newline)
         except OSError as e:
             raise ToolError(f"cannot write {p}: {e}")
         _note_read(ctx, p)
-        n = count if replace_all else 1
-        return f"edited {_rel(ctx, p)}: replaced {n} occurrence(s) of {len(old)} chars"
+        note = "" if how == "exact" else f" [{how}]"
+        return f"edited {_rel(ctx, p)}: replaced {n} occurrence(s) of {len(old)} chars{note}"
+
+
+def _split_lines_nl(s: str) -> List[str]:
+    """Split for line-based matching. A single trailing newline doesn't create
+    an empty final line (models add/drop it freely)."""
+    lines = s.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+_FLEX_PASSES = (
+    ("trailing-space", lambda a, b: a.rstrip() == b.rstrip()),
+    ("ignoring-whitespace", lambda a, b: "".join(a.split()) == "".join(b.split())),
+)
+
+
+def _pick_hits(hits: List[int], line_hint, replace_all: bool):
+    """Disambiguate matching window starts. None = ambiguous (no hint)."""
+    if replace_all:
+        return hits
+    if len(hits) == 1:
+        return hits
+    if line_hint is not None and hits:
+        return [min(hits, key=lambda i: abs(i - (line_hint - 1)))]
+    return None
+
+
+def _fuzzy_candidates(file_lines: List[str], old_lines: List[str],
+                      limit: int = 20000) -> List[tuple]:
+    """All windows scored by similarity (best first). Uses the classic
+    real_quick_ratio → quick_ratio → ratio cascade so big files stay fast;
+    hard-capped at `limit` lines."""
+    if not old_lines or len(file_lines) > limit:
+        return []
+    old_text = "\n".join(old_lines)
+    n = len(old_lines)
+    sm = difflib.SequenceMatcher(None, autojunk=False)
+    sm.set_seq2(old_text)
+    scored = []
+    for i in range(len(file_lines) - n + 1):
+        window = "\n".join(file_lines[i:i + n])
+        sm.set_seq1(window)
+        if sm.real_quick_ratio() < 0.45 or sm.quick_ratio() < 0.6:
+            continue
+        r = sm.ratio()
+        if r >= 0.3:
+            scored.append((r, i))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return scored
+
+
+def _nearest_summary(file_lines: List[str], old_lines: List[str],
+                     k: int = 3) -> str:
+    cand = _fuzzy_candidates(file_lines, old_lines)
+    if not cand:
+        return "none"
+    return ", ".join(f"line {i + 1} ({int(r * 100)}%)" for r, i in cand[:k])
+
+
+def _flexible_replace(text: str, old: str, new: str, replace_all: bool,
+                      line_hint):
+    """Aider-style fallback matching when the exact string is absent.
+
+    Passes: trailing-space-insensitive → all-whitespace-insensitive →
+    difflib fuzzy window (≥0.90 similarity, unambiguous). Returns
+    ("ok", updated_text, n, how) | ("ambiguous", hit_line_indices) | ("missing", None).
+    """
+    file_lines = text.split("\n")
+    old_lines = _split_lines_nl(old)
+    new_lines = _split_lines_nl(new)
+    n = len(old_lines)
+    if n == 0 or n > len(file_lines):
+        return ("missing", None)
+    ambiguous: List[int] = []
+    for name, eq in _FLEX_PASSES:
+        hits = [i for i in range(len(file_lines) - n + 1)
+                if all(eq(file_lines[i + j], old_lines[j]) for j in range(n))]
+        picked = _pick_hits(hits, line_hint, replace_all)
+        if picked:
+            out = list(file_lines)
+            for i in sorted(picked, reverse=True):
+                out[i:i + n] = new_lines
+            return ("ok", "\n".join(out), len(picked), name)
+        if len(hits) > 1:
+            ambiguous = hits
+    # fuzzy pass — only when confident and clearly best (or line hint agrees)
+    cand = _fuzzy_candidates(file_lines, old_lines)
+    if cand:
+        best_r, best_i = cand[0]
+        chosen = None
+        if line_hint is not None and 0 <= line_hint - 1 <= len(file_lines) - n:
+            anchored = min(cand, key=lambda t: abs(t[1] - (line_hint - 1)))
+            if anchored[0] >= 0.75:
+                chosen = anchored
+        if chosen is None and best_r >= 0.90 and \
+                (len(cand) == 1 or best_r - cand[1][0] >= 0.02):
+            chosen = (best_r, best_i)
+        if chosen is not None:
+            r, i = chosen
+            out = list(file_lines)
+            out[i:i + n] = new_lines
+            return ("ok", "\n".join(out), 1, f"fuzzy match {int(r * 100)}%, line {i + 1}")
+    if ambiguous:
+        return ("ambiguous", ambiguous)
+    return ("missing", None)
 
 
 def _expand_braces(pattern: str) -> List[str]:

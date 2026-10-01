@@ -3,6 +3,7 @@ sensitive-path guard, hooks, file checkpoints, extended thinking, parallel
 read-only tools."""
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import subprocess
@@ -102,6 +103,7 @@ class Agent:
         self.system_prompt = ""
         self.tools_disabled = False      # set when the model rejects tools
         self._error_history = []         # (tool_name, error_signature) for repeat detection
+        self._lint_cache = None          # None=未探测 / ""=探测过但无 / 模板
         self.interrupt_event = threading.Event()  # set → 协作式中断当前回合
         cwd = getattr(config, "cwd", None) or Path.cwd()
         self.ctx = ToolContext(cwd=cwd, config=config, session=session, ui=ui,
@@ -380,8 +382,9 @@ class Agent:
                     "User declined this tool call. Do not retry it unless the user asks.",
                     bool(reason))
         self.ui.tool_line(tool.name, tool.describe_call(args))
-        if tool.kind == "write" and self.checkpoints is not None:
-            targets = []
+        targets: list = []
+        before_map: dict = {}
+        if tool.kind == "write":
             for getter in ("mutated_paths", "mutated_path"):
                 fn = getattr(tool, getter, None)
                 if fn is not None:
@@ -389,10 +392,12 @@ class Agent:
                     targets = v if isinstance(v, list) else ([v] if v else [])
                     break
             for target in targets:
-                try:
-                    self.checkpoints.snapshot(Path(target), tool.name)
-                except OSError:
-                    pass
+                if self.checkpoints is not None:
+                    try:
+                        self.checkpoints.snapshot(Path(target), tool.name)
+                    except OSError:
+                        pass
+                before_map[str(target)] = self._read_text_safe(Path(target))
         try:
             result = tool.run(args, self.ctx)
         except ToolError as e:
@@ -420,6 +425,13 @@ class Agent:
                 blocks.append({"type": "text", "text": f"[hook feedback] {hout[:300]}"})
             return {"blocks": blocks}, False
         result = self._maybe_summarize(tool.name, result)
+        # 自动放行的编辑也要看得见变更（Claude Code 行为：自动 ≠ 不可见）
+        self._show_edit_diff(targets, before_map)
+        # Aider 式快速回路：编辑落盘立即 lint，报错当场喂回模型自修
+        if isinstance(result, str):
+            lint_feedback = self._lint_targets(targets)
+            if lint_feedback:
+                result += lint_feedback
         self.ui.tool_result_note(result)
         _hmsg, hout, _ok = self._run_hook("post_tool_use",
                                           {"tool": tool.name, "args": args},
@@ -427,6 +439,56 @@ class Agent:
         if hout and isinstance(result, str):
             result += f"\n[hook feedback] {hout[:300]}"
         return result, False
+
+    @staticmethod
+    def _read_text_safe(path: Path) -> Optional[str]:
+        try:
+            if path.is_file():
+                return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        return None
+
+    def _show_edit_diff(self, targets: list, before_map: dict) -> None:
+        """Auto-approved edits render a compact diff instead of a bare summary."""
+        if not targets or self.mode not in ("accept-edits", "full-access"):
+            return
+        chunks = []
+        for t in targets[:5]:
+            p = Path(t)
+            after = self._read_text_safe(p)
+            before = before_map.get(str(p))
+            if before == after:
+                continue
+            rel = self._rel_display(p, self.ctx.cwd)
+            diff = list(difflib.unified_diff(
+                (before or "").splitlines(), (after or "").splitlines(),
+                fromfile=f"{rel} (before)", tofile=f"{rel} (after)",
+                lineterm=""))
+            if diff:
+                chunks.append("\n".join(diff[:30]))
+        if chunks:
+            self.ui.tool_diff("\n\n".join(chunks)[:4000])
+
+    def _lint_targets(self, targets: list) -> str:
+        """Run the project linter on just-mutated files; failures come back
+        as [lint] feedback appended to the tool result (advisory, non-blocking)."""
+        if not targets:
+            return ""
+        template = getattr(self.config, "lint_command", "") or self._lint_cache
+        if template is None:
+            from .lint import detect_lint_command
+            self._lint_cache = detect_lint_command(Path(self.ctx.cwd))
+            template = self._lint_cache
+        if not template:
+            return ""
+        from .lint import render_command, run_lint
+        cmd = render_command(template, [str(t) for t in targets], Path(self.ctx.cwd))
+        out = run_lint(Path(self.ctx.cwd), cmd)
+        if out:
+            return ("\n\n[lint] 项目 linter 对刚修改的文件报错：\n" + out
+                    + "\n请立即修复上述 lint 问题后继续。")
+        return ""
 
     def _guard_reason(self, tool, args: dict) -> Optional[str]:
         """Sensitive-path guard: fires before yolo/confirm for critical assets."""

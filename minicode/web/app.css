@@ -1032,6 +1032,14 @@ textarea::placeholder { color: var(--faint); }
 .diff-view .dline { display: block; white-space: pre; }
 .diff-view .dline.add { color: var(--ok); background: rgba(127, 176, 105, .08); }
 .diff-view .dline.del { color: var(--err); background: rgba(224, 82, 82, .08); }
+/* 工具卡片内嵌的编辑 diff（v0.21 自动编辑可视化） */
+.tool-card .tool-diff {
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  max-height: 300px;
+}
 .load-older {
   display: block;
   margin: 16px auto 4px;

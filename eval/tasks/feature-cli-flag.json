@@ -1,0 +1,14 @@
+{
+  "id": "feature-cli-flag",
+  "category": "feature",
+  "instruction": "给 echo.py 加一个 --upper 选项：python echo.py --upper hello 应输出 HELLO；不带 --upper 时行为不变。用 sys.argv 手写解析，不引入第三方库。",
+  "setup": {
+    "files": {
+      "echo.py": "import sys\n\nprint(\" \".join(sys.argv[1:]))\n"
+    }
+  },
+  "check": {
+    "command": "{python} echo.py --upper hello",
+    "expect_output": "HELLO"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "feature-sort-spec",
+  "category": "feature",
+  "instruction": "scores.py 中 sort_scores 未实现。按 docstring 规格实现：按分数降序，分数相同按名字升序，稳定返回新列表。",
+  "setup": {
+    "files": {
+      "scores.py": "def sort_scores(rows):\n    \"\"\"rows 是 (name, score) 元组列表，返回排序后的新列表。\n\n    先按 score 降序，再按 name 升序。\n    sort_scores([(\"b\", 2), (\"a\", 2), (\"c\", 1)])\n    == [(\"a\", 2), (\"b\", 2), (\"c\", 1)]\n    \"\"\"\n    raise NotImplementedError\n"
+    }
+  },
+  "check": {
+    "command": "{python} \"{check}\" \"{sandbox}\""
+  }
+}

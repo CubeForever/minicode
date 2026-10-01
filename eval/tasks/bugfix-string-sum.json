@@ -1,0 +1,14 @@
+{
+  "id": "bugfix-string-sum",
+  "category": "bugfix",
+  "instruction": "python report.py 输出 12，但期望输出 3（求和而非拼接）。修复 report.py。",
+  "setup": {
+    "files": {
+      "report.py": "a = \"1\"\nb = \"2\"\nprint(a + b)\n"
+    }
+  },
+  "check": {
+    "command": "{python} report.py",
+    "expect_output": "3"
+  }
+}

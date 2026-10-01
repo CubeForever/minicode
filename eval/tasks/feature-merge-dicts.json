@@ -1,0 +1,13 @@
+{
+  "id": "feature-merge-dicts",
+  "category": "feature",
+  "instruction": "merge.py 中 deep_merge 未实现。按 docstring 规格实现：后者的键优先，dict 值递归合并，其他值直接覆盖。",
+  "setup": {
+    "files": {
+      "merge.py": "def deep_merge(a, b):\n    \"\"\"递归合并两个 dict，返回新 dict（不修改入参）。\n\n    deep_merge({\"x\": {\"p\": 1}, \"y\": 1}, {\"x\": {\"q\": 2}, \"z\": 3})\n    == {\"x\": {\"p\": 1, \"q\": 2}, \"y\": 1, \"z\": 3}\n    \"\"\"\n    raise NotImplementedError\n"
+    }
+  },
+  "check": {
+    "command": "{python} \"{check}\" \"{sandbox}\""
+  }
+}

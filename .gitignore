@@ -8,3 +8,4 @@ build/
 .minicode.json
 .demo-script.json
 hello.txt
+eval/results/

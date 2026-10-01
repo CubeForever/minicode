@@ -1,0 +1,15 @@
+{
+  "id": "bugfix-empty-input",
+  "category": "bugfix",
+  "instruction": "运行 python avg.py data.txt 在 data.txt 为空时会崩溃。修复它：空文件时输出 no data，非空时输出平均值（保留一位小数）。",
+  "setup": {
+    "files": {
+      "avg.py": "import sys\n\nnums = [float(x) for x in open(sys.argv[1]).read().split()]\nprint(round(sum(nums) / len(nums), 1))\n",
+      "data.txt": ""
+    }
+  },
+  "check": {
+    "command": "{python} avg.py data.txt",
+    "expect_output": "no data"
+  }
+}

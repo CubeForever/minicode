@@ -48,6 +48,9 @@ class SilentUI(UI):
     def tool_result_note(self, text):
         pass
 
+    def tool_diff(self, diff, max_lines=30):
+        pass   # -p --output-format json 只输出最终 JSON
+
     def info(self, msg):
         pass
 
@@ -694,7 +697,8 @@ HELP_SECTIONS = [
                   ("/yolo", "一键切到完全访问"), ("/undo", "撤销上一次文件修改"),
                   ("/todos", "任务清单进度"),
                   ("/rewind", "回退到任一检查点"),
-                  ("/diff", "本会话改动总览"), ("/verify [命令]", "自检门禁：失败自动修复")]),
+                  ("/diff", "本会话改动总览"), ("/verify [命令]", "自检门禁：失败自动修复"),
+                  ("/lint [命令]", "编辑后 lint 快速回路：报错当场喂回修复")]),
     ("上下文与记忆", [("/brain", "项目大脑（跨会话记忆）"), ("/memory", "项目记忆 MINICODE.md"),
                     ("/context", "上下文占用明细"), ("/cost", "累计 token 用量"),
                     ("/limit [1M]", "上下文长度自定义"), ("/stats", "历史会话统计")]),
@@ -831,7 +835,7 @@ def _resolve_command(line: str, agent: Agent, ui: UI):
         return alias_cmd, arg, True
     known = ["/help", "/clear", "/compact", "/model", "/models", "/probe", "/mode",
              "/undo", "/rewind", "/diff", "/reasoning", "/cost", "/context",
-             "/memory", "/brain", "/verify", "/todos", "/agents", "/mcp",
+             "/memory", "/brain", "/verify", "/lint", "/todos", "/agents", "/mcp",
              "/add-dir", "/transcript", "/output-style", "/doctor", "/tools",
              "/status", "/resume", "/export", "/init", "/plans", "/stats",
              "/commit", "/pr", "/exit", "/quit", "/q"]
@@ -1027,6 +1031,35 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
         else:
             agent.config.verify_command = arg
             ui.info(f"自检命令已设置：{arg} —— 每次文件改动后自动执行，失败自动修复。")
+    elif name == "/lint":
+        from .lint import detect_lint_command, render_command, run_lint
+        cfg = agent.config
+        if arg.lower() == "off":
+            cfg.lint_command = ""
+            agent._lint_cache = ""
+            ui.info("编辑后 lint 快速回路已关闭。")
+        elif arg:
+            cfg.lint_command = arg
+            ui.info(f"lint 命令已设置：{arg} —— 之后每次编辑落盘自动执行，"
+                    "报错当场喂回模型修复（可用 {files} 占位符）。")
+        else:
+            template = cfg.lint_command or agent._lint_cache
+            if template is None:
+                agent._lint_cache = detect_lint_command(Path.cwd())
+                template = agent._lint_cache
+            if not template:
+                ui.warn("未配置 lint：在 .minicode.json 设 \"lint_command\""
+                        "（如 ruff check {files}），或项目含 ruff/eslint 配置自动探测。")
+            else:
+                files = sorted({e["path"] for e in agent.checkpoints.entries}) \
+                    if agent.checkpoints else []
+                cmd = render_command(template, files, Path.cwd())
+                ui.info(f"运行 {cmd} …")
+                out = run_lint(Path.cwd(), cmd)
+                if out:
+                    ui.warn(f"lint 报错：\n{out}")
+                else:
+                    ui.info("lint 通过，无问题。")
     elif name == "/todos":
         if agent.session.todos:
             ui.todo_render(agent.session.todos)
@@ -1454,7 +1487,7 @@ def main(argv=None) -> int:
                      "/transcript", "/output-style", "/doctor", "/tools", "/status",
                      "/resume", "/export", "/init", "/plans", "/stats", "/commit",
                      "/pr", "/copy", "/limit", "/skills", "/prompt", "/market",
-                     "/hooks", "/exit"]
+                     "/hooks", "/lint", "/exit"]
     command_names += ["/" + n for n in _custom_commands()]
 
     turn_no = 0

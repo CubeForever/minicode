@@ -1,0 +1,13 @@
+{
+  "id": "bugfix-json-syntax",
+  "category": "bugfix",
+  "instruction": "config.json 存在 JSON 语法错误导致 json.load 失败。修复它，保持字段内容不变。",
+  "setup": {
+    "files": {
+      "config.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.0\",\n  \"debug\": true,\n  \"tags\": [\"a\", \"b\",],\n}\n"
+    }
+  },
+  "check": {
+    "command": "{python} \"{check}\" \"{sandbox}\""
+  }
+}

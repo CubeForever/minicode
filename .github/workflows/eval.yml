@@ -1,0 +1,41 @@
+name: eval
+
+# 每夜真实任务评测：成功率 / token / 时长。任务失败不会弄红 CI——
+# 结果作为 artifact 供人工审阅，用于指导优化方向（防止回归）。
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # UTC 18:00 = 北京时间次日凌晨 2 点
+  workflow_dispatch: {}
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install pytest
+      - name: run eval tasks
+        env:
+          OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.EVAL_OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ secrets.EVAL_OPENAI_MODEL }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "未配置 EVAL_OPENAI_API_KEY secret —— 本次跳过 eval（在 repo secrets 登记端点后自动启用）"
+            exit 0
+          fi
+          python scripts/run_eval.py --timeout 300 --out eval/results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: eval/results/
+          if-no-files-found: ignore

@@ -1,0 +1,14 @@
+{
+  "id": "refactor-rename-symbol",
+  "category": "refactor",
+  "instruction": "把 utils.py 里的函数 calc_total 重命名为 invoice_total，并同步更新所有调用点（main.py）。改名后行为必须不变。",
+  "setup": {
+    "files": {
+      "utils.py": "def calc_total(items):\n    return sum(items)\n",
+      "main.py": "from utils import calc_total\n\ndef run():\n    return calc_total([1, 2, 3])\n\nif __name__ == \"__main__\":\n    print(run())\n"
+    }
+  },
+  "check": {
+    "command": "{python} \"{check}\" \"{sandbox}\""
+  }
+}

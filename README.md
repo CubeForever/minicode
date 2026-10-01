@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.20.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 340 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.21.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 356 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -21,10 +21,12 @@
 - **工程保险**：文件检查点（/undo /rewind）、会话持久化、上下文分层压缩（最近回合保留原文，窗口按模型自动推断，/limit 自定义）、敏感路径门禁、SSRF 防护
 - **智能体行为优化**：工具结果按类型智能摘要（大文件按行折叠/grep 按文件分组/bash 保留错误行）、工具失败自动归因并给出修正建议、同类错误连续 3 次强制换策略、上下文压缩按工具重要性区分保留比例（写操作比读操作保留更多）
 - **上下文经济学**：分层压缩（最近 4 个回合逐字保留 thinking 与工具调用配对，更早的进摘要 + 操作骨架，对标 Claude Code compaction）、Anthropic 对话消息递增缓存断点（长会话成本大幅下降）、真实 usage 持续校准 token 估算（中文会话不再数倍偏差）
+- **编辑可靠性三件套**：edit_file 多通道弹性匹配（尾随空格/缩进漂移自动对齐、0.9+ 相似度模糊匹配带相似度与行号报告、line= 行号定位消歧，对标 Aider 多通道匹配）、自动模式下编辑落盘即渲染紧凑 diff（终端与 Web 均着色）、编辑后 lint 快速回路（报错当场喂回模型自修，配置 lint_command 或自动探测 ruff/eslint）
+- **eval 回路**：13 个真实任务（修 bug / 加特性 / 重构 / 写测试）无头运行 + 可执行校验判分（校验脚本在沙箱外防作弊），统计成功率/时长/token；`python scripts/run_eval.py` 本地可跑，夜间 CI 自动度量防回归
 
 ## 优势
 
-- **零依赖、全部可读**：核心约 10450 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
+- **零依赖、全部可读**：核心约 10800 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
 - **不锁定模型**：一个环境变量切换 GLM / DeepSeek / Claude / 本地 Ollama；兼容层在真实中转站联调中打磨，新端点的怪癖大多自动消化
 - **安全边界内建**：敏感路径强制确认（yolo 也不放行）、SSRF 封禁、第三方插件/钩子/项目受限配置首次信任确认（内容变更后重新询问）、危险命令告警
 - **三项独创**（Claude Code / Codex 均无）：项目大脑（Brain）、自检回路（Verify Gate）、圆桌模式（Panel）
@@ -178,7 +180,7 @@ minicode --install ./my-pack --user                           # 装到用户级
 
 ### 斜杠命令
 
-`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/hooks` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/review` `/copy` `/exit`
+`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/lint` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/hooks` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/review` `/copy` `/exit`
 
 ### 自定义扩展
 
@@ -206,6 +208,7 @@ minicode/
 ├── session.py      会话 / 压缩 / 持久化
 ├── checkpoints.py  文件检查点（undo / rewind）
 ├── guard.py        敏感路径门禁
+├── lint.py         编辑后 lint 快速回路（配置 / ruff / eslint 自动探测）
 ├── prompts.py      系统提示词（注入防御 / Git 护栏）
 ├── plugins.py      本地插件加载
 ├── install.py      扩展包安装（git / 本地目录 → .minicode）
@@ -225,7 +228,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 340 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 356 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

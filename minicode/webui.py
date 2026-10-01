@@ -148,6 +148,10 @@ class WebBridgeUI(UI):
     def tool_result_note(self, text):
         self._emit({"t": "result", "text": _clean(text)})
 
+    def tool_diff(self, diff, max_lines=30):
+        # 原始 unified diff 文本发给浏览器，前端自行着色渲染
+        self._emit({"t": "diff", "text": _clean(str(diff))[:4000]})
+
     def info(self, msg):
         self._emit({"t": "info", "text": _clean(msg)})
 

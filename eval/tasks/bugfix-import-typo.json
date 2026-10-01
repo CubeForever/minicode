@@ -1,0 +1,15 @@
+{
+  "id": "bugfix-import-typo",
+  "category": "bugfix",
+  "instruction": "运行 python main.py 报 ModuleNotFoundError，原因是模块文件名拼写错误。修正它（重命名文件并保证 main.py 正常运行），使输出为 ok。",
+  "setup": {
+    "files": {
+      "utlis.py": "def check() -> str:\n    return \"ok\"\n",
+      "main.py": "from utlis import check\n\nprint(check())\n"
+    }
+  },
+  "check": {
+    "command": "{python} main.py",
+    "expect_output": "ok"
+  }
+}

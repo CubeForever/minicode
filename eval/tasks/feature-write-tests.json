@@ -1,0 +1,13 @@
+{
+  "id": "feature-write-tests",
+  "category": "testing",
+  "instruction": "为 mathops.py 新建 test_mathops.py（pytest 风格）：add 与 mul 各至少 2 个断言用例，其中 mul 必须包含 0 与负数的用例。写完运行 pytest 确认全部通过。",
+  "setup": {
+    "files": {
+      "mathops.py": "def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n"
+    }
+  },
+  "check": {
+    "command": "{python} -m pytest -q test_mathops.py"
+  }
+}

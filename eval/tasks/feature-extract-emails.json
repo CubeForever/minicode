@@ -1,0 +1,14 @@
+{
+  "id": "feature-extract-emails",
+  "category": "feature",
+  "instruction": "新建 extract.py：读取 data.txt，用正则统计其中的电子邮件地址数量并输出该数字（只输出数字）。不引入第三方库。",
+  "setup": {
+    "files": {
+      "data.txt": "联系 alice@example.com 或 bob@test.org；无效：not-an-email，另一个有效 carol@dev.io\n"
+    }
+  },
+  "check": {
+    "command": "{python} extract.py",
+    "expect_output": "3"
+  }
+}

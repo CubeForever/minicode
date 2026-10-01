@@ -156,6 +156,25 @@ class UI:
         self._write(gray(f"  ⎿ {lines[0][:130]}{extra}") + "\n")
         self._need_newline = False
 
+    def tool_diff(self, diff: str, max_lines: int = 30):
+        """自动放行的编辑后渲染紧凑 diff（自动 ≠ 不可见）。"""
+        lines = str(diff).splitlines()
+        shown = lines[:max_lines]
+        self.newline()
+        for line in shown:
+            s = line.lstrip()
+            if s.startswith("+") and not s.startswith("+++"):
+                self._write(green("  ▎ " + line) + "\n")
+            elif s.startswith("-") and not s.startswith("---"):
+                self._write(red("  ▎ " + line) + "\n")
+            elif s.startswith("@@"):
+                self._write(cyan("  ▎ " + line) + "\n")
+            else:
+                self._write(dim("  ▎ " + line) + "\n")
+        if len(lines) > max_lines:
+            self._write(dim(f"  ▎ … (+{len(lines) - max_lines} diff lines)") + "\n")
+        self._need_newline = False
+
     def info(self, msg: str):
         self.newline()
         self._write(cyan("ℹ " + msg) + "\n")
@@ -546,6 +565,9 @@ class SubUI(UI):
 
     def tool_result_note(self, text: str):
         pass
+
+    def tool_diff(self, diff: str, max_lines: int = 30):
+        pass   # 子代理保持安静：变更由主代理的 checkpoint 汇总呈现
 
     def info(self, msg: str):
         pass

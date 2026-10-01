@@ -1,0 +1,13 @@
+{
+  "id": "feature-implement-spec",
+  "category": "feature",
+  "instruction": "util.py 中 moving_average 只有一句 NotImplementedError。按 docstring 的规格实现它。",
+  "setup": {
+    "files": {
+      "util.py": "def moving_average(xs, k):\n    \"\"\"返回长度为 len(xs) - k + 1 的滑动平均值列表（float）。\n\n    moving_average([1, 2, 3, 4], 2) == [1.5, 2.5, 3.5]\n    k 必须大于 0 且不超过 len(xs)，否则抛 ValueError。\n    \"\"\"\n    raise NotImplementedError\n"
+    }
+  },
+  "check": {
+    "command": "{python} \"{check}\" \"{sandbox}\""
+  }
+}

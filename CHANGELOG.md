@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.21.0 (2026-10-01)
+
+编辑可靠性三件套 + eval 回路（v0.21 主题：**让编辑一次成功，并用度量验证收益**）：
+
+**edit_file 多通道弹性匹配（对标 Aider）**
+- 旧版 old_string 逐字精确匹配，空白/缩进稍有偏差即失败，只能靠模型重读重试——这是编辑类工具的最高频失败点
+- 新版分级降级：精确匹配 → 尾随空格不敏感 → 全空白不敏感（缩进漂移自动对齐）→ difflib 模糊窗口（≥0.90 相似度且明确最优才应用，结果注明 `[fuzzy match 96%, line 1]`）
+- 新增可选 `line` 参数（1-based，来自 read_file 输出）：多处命中时消歧、模糊匹配时锚定窗口
+- 完全失败时报出**最接近候选区域及相似度**（如 "line 3 (50%)"），模型一次修正而不是盲试
+
+**自动模式编辑 diff 呈现（对标 Claude Code"自动 ≠ 不可见"）**
+- accept-edits / full-access 下写工具落盘后渲染紧凑 unified diff（单文件 ≤30 行，自动模式此前只有一行摘要）
+- 终端着色（+绿 −红 @@青）；Web 端新增 diff 事件，浏览器内复用 /diff 的着色视图；子代理与 -p JSON 输出保持安静
+
+**编辑后 lint 快速回路（Aider 招牌）**
+- 写工具落盘后立即对刚修改的文件跑项目 linter，报错作为 [lint] 反馈追加进同一工具结果——模型当场自修，而不是等到测试阶段
+- 配置 `"lint_command": "ruff check {files}"` 显式指定（{files} 占位符自动引用相对路径）；未配置时自动探测 ruff（ruff.toml / [tool.ruff]）与 eslint（package.json + 配置文件），二进制不存在则静默跳过
+- 新增 /lint 命令：查看/设置 lint 命令、手动对本会话改动文件跑 lint、off 关闭
+- lint_command 列入受限字段：他人仓库的 .minicode.json 不能静默注入命令，须经信任门禁
+
+**eval 回路（真实任务成功率度量）**
+- 新增 eval/（13 个任务：修 bug / 加特性 / 重构 / 写测试，初始文件 ≤ 40 行、校验确定）+ scripts/run_eval.py（零依赖无头 runner）+ .github/workflows/eval.yml（每夜自动跑，结果 artifact，任务失败不弄红 CI）
+- 每个任务独立临时沙箱：setup 文件 → `python -m minicode -p <指令> --yolo --no-save` → 可执行校验判定；校验脚本在沙箱外防作弊
+- 统计成功率 / 时长 / token（解析回合用量行），落盘 JSON 报告；本地 `python scripts/run_eval.py --filter json` 即可复跑；离线自检支持 MINICODE_FAKE_LLM 脚本模型（tests/test_v021_eval.py 端到端验证）
+
+**测试**：新增 16 项（弹性匹配各通道/模糊应用与候选报告/line 消歧/diff 渲染各模式/lint 反馈与探测与渲染/eval runner 端到端），全量 356 项。
+
 ## 0.20.0 (2026-10-01)
 
 上下文经济学（v0.20 主题：**分层压缩 + 递增缓存断点 + token 校准**）：

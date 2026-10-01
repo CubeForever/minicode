@@ -32,8 +32,8 @@ PROVIDER_DEFAULTS = {
 # 危害有限，保持自动生效。
 RESTRICTED_KEYS = {
     "api_key", "base_url", "mcp_servers", "mcpServers", "hooks",
-    "permissions", "verify_command", "extra_body", "webfetch_allow_private",
-    "fallbacks", "marketplaces",
+    "permissions", "verify_command", "lint_command", "extra_body",
+    "webfetch_allow_private", "fallbacks", "marketplaces",
 }
 _RESTRICTED_DICT_KEYS = {"permissions", "extra_body", "mcp_servers", "hooks"}
 
@@ -73,6 +73,7 @@ class Config:
     output_style: str = "default"                    # default | explanatory
     reasoning_effort: str = ""                       # "" | low | medium | high
     verify_command: str = ""                         # self-verify gate, e.g. "pytest -q"
+    lint_command: str = ""                           # 编辑后 lint 快速回路，如 "ruff check {files}"；空=自动探测
     turn_budget: int = 0                             # max tokens per turn (0 = off)
     save_sessions: bool = True                       # False 时不落盘会话历史（隐私模式）
     webfetch_allow_private: bool = False             # allow web_fetch to hit internal IPs
@@ -227,6 +228,7 @@ def load_config(args) -> Optional[Config]:
         output_style=merged.get("output_style") or "default",
         reasoning_effort=str(merged.get("reasoning_effort") or ""),
         verify_command=str(merged.get("verify_command") or ""),
+        lint_command=str(merged.get("lint_command") or ""),
         turn_budget=int(merged.get("turn_budget") or 0),
         save_sessions=bool(merged.get("save_sessions", True)),
         webfetch_allow_private=bool(merged.get("webfetch_allow_private", False)),

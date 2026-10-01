@@ -1,0 +1,14 @@
+{
+  "id": "bugfix-off-by-one",
+  "category": "bugfix",
+  "instruction": "运行 python app.py 会报 IndexError。修复它，使输出恰好为 10 20 30 40（不要改动输出格式以外的逻辑）。",
+  "setup": {
+    "files": {
+      "app.py": "xs = [10, 20, 30, 40]\nfor i in range(len(xs)):\n    print(xs[i + 1], end=\" \")\n"
+    }
+  },
+  "check": {
+    "command": "{python} app.py",
+    "expect_output": "10 20 30 40"
+  }
+}

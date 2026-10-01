@@ -1,0 +1,14 @@
+{
+  "id": "refactor-extract-module",
+  "category": "refactor",
+  "instruction": "app.py 里 discount 函数被 total 和 main 重复使用。新建 pricing.py 把 discount 移进去，app.py 从 pricing 导入，保证 python app.py 输出不变（90）。",
+  "setup": {
+    "files": {
+      "app.py": "def discount(price):\n    return price * 0.9\n\n\ndef total(price):\n    return discount(price)\n\n\nif __name__ == \"__main__\":\n    print(int(total(100)))\n"
+    }
+  },
+  "check": {
+    "command": "{python} app.py",
+    "expect_output": "90"
+  }
+}
