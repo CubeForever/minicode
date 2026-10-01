@@ -92,15 +92,21 @@ def test_invalid_json_args(tmp_path):
 
 
 def test_compact(tmp_path):
+    # 6 个回合：前 2 个进 LLM 摘要，后 4 个保留原文（分层压缩）
     agent = make_agent(tmp_path, FakeProvider([{"text": "SUMMARY"}]))
-    agent.session.messages = [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "hi there"},
-    ]
+    msgs = []
+    for i in range(6):
+        msgs.append({"role": "user", "content": f"u{i}"})
+        msgs.append({"role": "assistant", "content": f"a{i}"})
+    agent.session.messages = msgs
     stats = agent.compact()
-    assert stats["before"] == 2
-    assert len(agent.session.messages) == 1
-    assert "SUMMARY" in agent.session.messages[0]["content"]
+    assert stats["before"] == 12
+    assert stats["dropped_turns"] == 2 and stats["kept_turns"] == 4
+    pre = agent.session.messages[0]
+    assert pre.get("compact_preamble")
+    assert "SUMMARY" in pre["content"]
+    kept = [m["content"] for m in agent.session.messages[1:]]
+    assert kept == ["u2", "a2", "u3", "a3", "u4", "a4", "u5", "a5"]
 
 
 def test_session_roundtrip(tmp_path):

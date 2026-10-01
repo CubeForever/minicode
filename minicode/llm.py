@@ -228,8 +228,24 @@ def _to_openai_messages(messages: List[dict], system: Optional[str]) -> List[dic
     return out
 
 
-def _to_anthropic_messages(messages: List[dict]) -> List[dict]:
+_CACHEABLE_BLOCK_TYPES = {"text", "tool_result", "tool_use", "image"}
+
+
+def _mark_cache_break(msg: dict) -> None:
+    """在消息的最后一个可缓存内容块上打 ephemeral 断点。"""
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return
+    for block in reversed(content):
+        if isinstance(block, dict) and block.get("type") in _CACHEABLE_BLOCK_TYPES:
+            block["cache_control"] = {"type": "ephemeral"}
+            return
+
+
+def _to_anthropic_messages(messages: List[dict],
+                           cache_turn_breaks: bool = False) -> List[dict]:
     out: List[dict] = []
+    turn_starts: List[int] = []   # out 下标：每条有内容的用户消息开启一个新回合
     for m in messages:
         role = m["role"]
         if role == "user":
@@ -246,11 +262,14 @@ def _to_anthropic_messages(messages: List[dict]) -> List[dict]:
                                                                       "image/png"),
                                                   "data": b.get("data", "")}})
                 if blocks:
+                    turn_starts.append(len(out))
                     out.append({"role": "user", "content": blocks})
             else:
                 text = content or ""
                 if text:
-                    out.append({"role": "user", "content": [{"type": "text", "text": text}]})
+                    turn_starts.append(len(out))
+                    out.append({"role": "user",
+                                "content": [{"type": "text", "text": text}]})
         elif role == "assistant":
             blocks = []
             for tb in m.get("thinking") or []:
@@ -294,6 +313,15 @@ def _to_anthropic_messages(messages: List[dict]) -> List[dict]:
                 prev["content"].append(block)
             else:
                 out.append({"role": "user", "content": [block]})
+    if cache_turn_breaks:
+        # 递增 prompt 缓存断点（Anthropic 上限 4 个：system + tools 占 2，
+        # 对话消息最多 2 个）。钉在最近两个已完成回合的末尾——最后一条
+        # 用户消息是当前回合的提示词，它之前各回合的消息在本回合内不再
+        # 变化，后续每次调用的前缀都能命中缓存；进入新回合时断点自然
+        # 前移一个回合，只增量写入一小段。
+        for start in turn_starts[-2:]:
+            if start > 0:
+                _mark_cache_break(out[start - 1])
     return out
 
 
@@ -591,7 +619,7 @@ class AnthropicProvider(Provider):
         body = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "messages": _to_anthropic_messages(messages),
+            "messages": _to_anthropic_messages(messages, cache_turn_breaks=True),
             "stream": True,
         }
         if system:  # prompt caching: system + tools are the stable prefix

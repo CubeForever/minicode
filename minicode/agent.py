@@ -137,6 +137,7 @@ class Agent:
             if self._interrupted():
                 raise Interrupted()
             try:
+                chars_before = self.session.content_chars()
                 msg, usage = self._step(budget)
             except ToolUnsupportedError:
                 if not self.tools_disabled:
@@ -153,6 +154,7 @@ class Agent:
                 return ""
             self.session.add(msg)
             self.session.note_usage(usage)
+            self.session.calibrate_usage(chars_before, usage)
             turn_tokens += ((usage or {}).get("input", 0)
                             + (usage.get("output", 0) if usage else 0))
             tool_calls = msg.get("tool_calls") or []
@@ -689,6 +691,12 @@ class Agent:
         with Spinner("Compacting context"):
             stats = self.session.compact(self.provider, instructions,
                                          carry_over=self._carry_over())
-        self.ui.info(f"上下文已压缩：{stats['before']} 条消息 → "
-                     f"结构化状态 + 摘要 {stats['summary_chars']} 字符")
+        parts = []
+        if stats["summary_chars"]:
+            parts.append(f"摘要 {stats['summary_chars']} 字符")
+        if stats["digest_chars"]:
+            parts.append(f"操作骨架 {stats['digest_chars']} 字符")
+        detail = " + ".join(parts) or "结构化状态"
+        self.ui.info(f"上下文已压缩：{stats['before']} 条消息 → {detail}，"
+                     f"最近 {stats['kept_turns']} 个回合保留原文")
         return stats

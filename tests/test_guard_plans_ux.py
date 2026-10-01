@@ -232,6 +232,10 @@ def test_panel_parallel_single_round(tmp_path):
 
 def test_structured_compaction(tmp_path):
     agent = make_agent(tmp_path, FakeProvider([{"text": "SUMMARY"}]))
+    # 填充回合 + 早期回合（进摘要），之后是含结构化状态的最近回合（保留原文）
+    for i in range(4):
+        agent.session.add({"role": "user", "content": f"填充 {i}"})
+        agent.session.add({"role": "assistant", "content": "好的"})
     agent.session.add({"role": "user", "content": "开工"})
     agent.session.add({"role": "assistant", "content": None,
                        "tool_calls": [{"id": "t", "name": "bash",
@@ -244,3 +248,5 @@ def test_structured_compaction(tmp_path):
     assert "任务清单" in ctx_msg and "收尾" in ctx_msg
     assert "执行过的关键命令" in ctx_msg and "pytest -q" in ctx_msg
     assert "SUMMARY" in ctx_msg
+    # 最近回合原文保留（含工具调用配对）
+    assert any(m.get("content") == "开工" for m in agent.session.messages[1:])

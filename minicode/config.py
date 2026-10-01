@@ -97,6 +97,39 @@ class Config:
             return "bash"
 
 
+# 模型名子串 → 官方上下文窗口。未显式配置 context_limit 时按模型家族
+# 推断——否则 openai 兼容端默认 1M 会让 60%/80% 压缩阈值在 128K 模型上
+# 完全失真（永远触发不了 microcompaction / 自动压缩）。先专后泛，
+# 未匹配到时回落 provider 默认值。
+_CONTEXT_BY_MODEL: tuple = (
+    (("claude",), 200_000),
+    (("gpt-4.1",), 1_000_000),
+    (("gpt-5",), 400_000),
+    (("o3", "o4-mini"), 200_000),
+    (("gpt-4o", "gpt-4-turbo"), 128_000),
+    (("glm-4.5", "glm-4.6", "glm-5"), 200_000),
+    (("glm",), 128_000),
+    (("deepseek",), 128_000),
+    (("kimi", "moonshot"), 256_000),
+    (("qwen3",), 262_144),
+    (("qwen",), 131_072),
+    (("gemini",), 1_000_000),
+    (("grok",), 256_000),
+    (("doubao",), 256_000),
+    (("minimax-m1",), 1_000_000),
+    (("minimax",), 200_000),
+    (("llama",), 128_000),
+)
+
+
+def infer_context_limit(model: str, fallback: int) -> int:
+    low = (model or "").lower()
+    for names, limit in _CONTEXT_BY_MODEL:
+        if any(name in low for name in names):
+            return limit
+    return fallback
+
+
 def _read_json(path: Path) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -172,14 +205,17 @@ def load_config(args) -> Optional[Config]:
     if mode not in ("default", "accept-edits", "plan", "full-access"):
         mode = "default"
 
+    model = str(getattr(args, "model", None) or merged.get("model")
+                or os.environ.get(model_env) or pd["model"])
+
     return Config(
         provider=provider,
         api_key=api_key,
         base_url=str(merged.get("base_url") or os.environ.get(url_env) or pd["base_url"]),
-        model=str(getattr(args, "model", None) or merged.get("model")
-                  or os.environ.get(model_env) or pd["model"]),
+        model=model,
         max_tokens=max_tokens,
-        context_limit=int(merged.get("context_limit") or pd["context_limit"]),
+        context_limit=int(merged.get("context_limit")
+                          or infer_context_limit(model, pd["context_limit"])),
         shell=merged.get("shell"),
         timeout=int(merged.get("timeout") or 120),
         include_usage=bool(merged.get("include_usage", True)),

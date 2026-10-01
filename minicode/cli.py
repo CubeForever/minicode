@@ -328,6 +328,7 @@ def _save(agent: Agent) -> None:
 def _after_turn(agent: Agent) -> None:
     _save(agent)
     ui, cfg, s = agent.ui, agent.config, agent.session
+    s.end_turn()   # 记录本回合输入规模，供剩余回合数估算
     ctx_tokens = s.context_tokens()  # real usage, or estimate when provider omits it
     if cfg.context_limit and ctx_tokens > 0:
         pct = ctx_tokens / cfg.context_limit * 100
@@ -1461,7 +1462,8 @@ def main(argv=None) -> int:
     while True:
         try:
             ui.context_bar(agent.session.context_tokens(),
-                           cfg.context_limit, cfg.model)
+                           cfg.context_limit, cfg.model,
+                           turns_left=agent.session.turns_remaining(cfg.context_limit))
             line = read_line(cyan("❯ ") if ui_colored() else "❯ ", command_names)
         except EOFError:
             break

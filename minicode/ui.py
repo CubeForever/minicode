@@ -195,7 +195,8 @@ class UI:
             self._write(dim("  " + "─" * 50) + "\n")
         self._need_newline = False
 
-    def context_bar(self, used: int, limit: int, model: str = ""):
+    def context_bar(self, used: int, limit: int, model: str = "",
+                    turns_left=None):
         """Minimal opencode-style context meter right above the prompt."""
         if not limit:
             return
@@ -209,6 +210,8 @@ class UI:
         line = (dim("  ctx ") + bar + dim("  剩余 ") + f"{remaining:.0f}%" +
                 gray(f" · {_fmt_tokens(used)}/{_fmt_tokens(limit)}") +
                 (gray(f" · {model}") if model else ""))
+        if turns_left is not None:
+            line += gray(f" · ≈{turns_left:.0f} 轮")
         self._write(line + "\n")
         self._need_newline = False
 
