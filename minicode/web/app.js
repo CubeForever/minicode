@@ -715,7 +715,8 @@ const COMMANDS = ["/mode", "/undo", "/rewind", "/diff", "/limit", "/reasoning",
   "/cost", "/context", "/tools", "/todos", "/brain", "/memory", "/export",
   "/transcript", "/plans", "/agents", "/skills", "/mcp", "/model", "/models",
   "/add-dir", "/verify", "/init", "/commit", "/pr", "/review", "/stats",
-  "/doctor", "/output-style", "/extensions", "/prompt", "/market", "/help"];
+  "/doctor", "/output-style", "/extensions", "/prompt", "/market", "/hooks",
+  "/help"];
 function showCmdHint() {
   const hint = $("#cmdHint");
   const v = input.value.trim();

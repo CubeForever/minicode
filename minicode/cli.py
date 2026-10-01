@@ -701,7 +701,7 @@ HELP_SECTIONS = [
     ("项目与扩展", [("/init", "生成 MINICODE.md"), ("/commit", "规范提交本会话改动"),
                   ("/pr [base]", "生成/创建 PR"), ("/plans", "存档计划管理"),
                   ("/agents", "子智能体列表"), ("/skills", "工作流技能列表"),
-                  ("/mcp", "MCP 服务器状态"),
+                  ("/mcp", "MCP 服务器状态"), ("/hooks", "已配置 hooks 一览"),
                   ("/prompt <服务器> <名>", "调用 MCP prompt 发起回合"),
                   ("/market", "扩展市场目录"),
                   ("/add-dir <目录>", "授权额外目录")]),
@@ -1071,6 +1071,27 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                         ui.error(f"prompt 获取失败：{e}")
                     if text:
                         _run_turn(agent, text)
+    elif name == "/hooks":
+        hooks = getattr(agent.config, "hooks", {}) or {}
+        if not hooks:
+            ui.plain("  未配置任何 hooks。可挂事件：session_start / user_prompt_submit /")
+            ui.plain("  pre_tool_use / post_tool_use / stop / subagent_stop / pre_compact / turn_end")
+            ui.plain(gray("  在 ~/.minicode.json 或 .minicode.json 的 \"hooks\" 键配置；"
+                          "支持 matcher 过滤、timeout 与 {\"decision\": \"block\"/\"approve\"} 决策协议"))
+        else:
+            for event in ("session_start", "user_prompt_submit", "pre_tool_use",
+                          "post_tool_use", "stop", "subagent_stop", "pre_compact",
+                          "turn_end"):
+                if event not in hooks:
+                    continue
+                ui.plain(cyan(f"  {event}"))
+                for r in Agent._hook_rules(hooks.get(event)):
+                    extra = ""
+                    if r["matcher"]:
+                        extra += gray(f" · matcher: {r['matcher']}")
+                    if r["timeout"] != 30:
+                        extra += gray(f" · timeout: {r['timeout']}s")
+                    ui.plain(f"    · {r['command'][:96]}{extra}")
     elif name == "/market":
         from . import market as _market
         packs, errors = _market.list_packs(agent.config)
@@ -1430,7 +1451,7 @@ def main(argv=None) -> int:
                      "/transcript", "/output-style", "/doctor", "/tools", "/status",
                      "/resume", "/export", "/init", "/plans", "/stats", "/commit",
                      "/pr", "/copy", "/limit", "/skills", "/prompt", "/market",
-                     "/exit"]
+                     "/hooks", "/exit"]
     command_names += ["/" + n for n in _custom_commands()]
 
     turn_no = 0

@@ -55,6 +55,7 @@ class McpClient:
         self.prompts: List[dict] = []
         self.server_info: dict = {}
         self.server_capabilities: dict = {}
+        self.restart_count = 0   # 服务器崩溃后自动重启的次数（/mcp 状态可见）
         self._id = 0
         try:
             self.timeout = max(1, int(self.cfg.get("timeout") or DEFAULT_TIMEOUT))
@@ -320,6 +321,29 @@ class McpClient:
     # ---------- tools ----------
 
     def call(self, tool_name: str, args: dict) -> str:
+        """调用工具。stdio 服务器意外崩溃时自动重启一次并重试同一调用；
+        显式 stop 过的（status=stopped）不重启。"""
+        try:
+            return self._call_impl(tool_name, args)
+        except McpError as e:
+            if self.http_url or self.status == "stopped" \
+                    or getattr(self, "_retrying", False):
+                raise
+            crashed = (self.proc is not None and self.proc.poll() is not None) \
+                or "closed the stream" in str(e)
+            if not crashed:
+                raise
+            self._retrying = True
+            try:
+                if self.start():
+                    self.restart_count += 1
+                    return self._call_impl(tool_name, args)
+                raise ToolError(
+                    f"mcp:{self.name} 已崩溃且自动重启失败：{self.error}") from None
+            finally:
+                self._retrying = False
+
+    def _call_impl(self, tool_name: str, args: dict) -> str:
         result = self.request("tools/call", {"name": tool_name, "arguments": args}) or {}
         parts = result.get("content") or []
         texts = [p.get("text", "") for p in parts if isinstance(p, dict)
@@ -402,6 +426,8 @@ class McpManager:
         for name, c in self.clients.items():
             state = c.status if c.status != "connected" else \
                 f"connected ({len(c.tools)} tools)"
+            if c.restart_count:
+                state += f" · 自动重启 {c.restart_count} 次"
             lines.append(f"  {name:<20} {state}" + (f" — {c.error}" if c.error else ""))
             if c.status == "connected":
                 for t in c.tools:

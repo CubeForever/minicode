@@ -27,7 +27,7 @@ from typing import List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from . import session as session_mod
-from .agent import MODES
+from .agent import MODES, Agent
 from .llm import LLMError
 from .session import Session
 from .ui import UI
@@ -868,6 +868,25 @@ class WebUIServer:
             if not text:
                 return {"error": "prompt 为空。"}
             return {"turn": text}
+        if name == "hooks":
+            hooks = getattr(agent.config, "hooks", {}) or {}
+            if not hooks:
+                return {"output": "未配置任何 hooks。可挂事件：session_start / "
+                                  "user_prompt_submit / pre_tool_use / post_tool_use / "
+                                  "stop / subagent_stop / pre_compact / turn_end"}
+            lines = []
+            for event in ("session_start", "user_prompt_submit", "pre_tool_use",
+                          "post_tool_use", "stop", "subagent_stop", "pre_compact",
+                          "turn_end"):
+                if event not in hooks:
+                    continue
+                lines.append(event)
+                for r in Agent._hook_rules(hooks.get(event)):
+                    extra = f" · matcher: {r['matcher']}" if r["matcher"] else ""
+                    if r["timeout"] != 30:
+                        extra += f" · timeout: {r['timeout']}s"
+                    lines.append(f"  · {r['command'][:96]}{extra}")
+            return {"output": "\n".join(lines)}
         if name == "market":
             from . import market as _market
             packs, errors = _market.list_packs(agent.config)
@@ -956,7 +975,7 @@ class WebUIServer:
             return {"output": "\n".join(
                 "/mode /undo /rewind /diff /limit /reasoning /cost /context "
                 "/tools /todos /brain /memory /export /transcript /plans "
-                "/agents /skills /mcp /prompt /market /model /models /add-dir "
+                "/agents /skills /mcp /prompt /market /hooks /model /models /add-dir "
                 "/verify /init /commit /pr /review /help —— /init /commit /pr "
                 "/review 会发起一个回合；!cmd 直通本地执行")}
         if name in ("init", "commit", "pr", "review"):

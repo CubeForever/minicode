@@ -177,7 +177,7 @@ minicode --install ./my-pack --user                           # 装到用户级
 
 ### 斜杠命令
 
-`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/copy` `/exit`
+`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/hooks` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/copy` `/exit`
 
 ### 自定义扩展
 
