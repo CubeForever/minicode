@@ -691,6 +691,7 @@ HELP_SECTIONS = [
              ("/transcript", "浏览最近对话")]),
     ("执行与安全", [("/mode [模式]", "default / accept-edits / plan / full-access"),
                   ("/yolo", "一键切到完全访问"), ("/undo", "撤销上一次文件修改"),
+                  ("/todos", "任务清单进度"),
                   ("/rewind", "回退到任一检查点"),
                   ("/diff", "本会话改动总览"), ("/verify [命令]", "自检门禁：失败自动修复")]),
     ("上下文与记忆", [("/brain", "项目大脑（跨会话记忆）"), ("/memory", "项目记忆 MINICODE.md"),
@@ -704,8 +705,9 @@ HELP_SECTIONS = [
                   ("/mcp", "MCP 服务器状态"), ("/hooks", "已配置 hooks 一览"),
                   ("/prompt <服务器> <名>", "调用 MCP prompt 发起回合"),
                   ("/market", "扩展市场目录"),
+                  ("/review", "审查代码改动（本会话 diff 或指定文件）"),
                   ("/add-dir <目录>", "授权额外目录")]),
-    ("系统", [("/tools", "工具列表"), ("/status", "当前状态"), ("/output-style", "输出风格"),
+    ("系统", [("/tools", "工具列表"), ("/status", "当前状态"), ("/copy", "复制上条回复到剪贴板"), ("/output-style", "输出风格"),
              ("/doctor", "环境自检"), ("/help", "本帮助"), ("/exit", "退出（Ctrl+D）")]),
 ]
 

@@ -67,6 +67,7 @@ POSIX 路径的 bug 修复直接提 PR。
 ## 规则
 
 - **一个 PR 一个主题**；新功能必须带测试；提交前 `pytest tests -q` 全绿
+- **文档一致性由 CI 强制**：`python scripts/check_consistency.py` 必须全绿（版本 / 测试数 / 命令清单等声明与代码对齐），新增模块要同步 README 架构图
 - **不加第三方运行时依赖**——这是项目的硬性原则（开发依赖 pytest/ruff/pytest-cov 除外）
 - **不提交任何密钥**；安全漏洞不要开公开 issue，按 README 安全章节联系维护者
 - 遵循现有代码风格（英文注释给模型读的输出、中文面向用户界面文案）

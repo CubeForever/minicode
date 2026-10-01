@@ -16,6 +16,11 @@
 **PyPI 首发（v0.18.2 tag）**
 - release 流水线实测：build + wheel 冒烟成功；publish 因 PyPI 可信发布方尚未登记而等待（一次性人工登记后 `gh run rerun` 或重推 tag 即可发布）
 
+**一致性门禁**
+- 新增 `scripts/check_consistency.py`（22 项检查：版本四处一致 / 测试数 / 工具数 / 终端与 Web 命令清单 / 架构图覆盖 / 行数声明 / .gitignore），并接入 CI 独立作业——每次推送强制核对文档声明与代码事实
+- 顺手修复：app.js 死命令 /extensions 移除；/review 与 /copy、/todos 补进终端 /help；/review 补进 README 清单
+- 测试 321 → **326 项**
+
 
 ## 0.18.2 (2026-09-30)
 
