@@ -358,6 +358,18 @@ function sysLine(kind, text) {
   target.appendChild(el("div", `sysline ${kind}`, esc(text)));
   scrollDown();
 }
+function renderDiffView(text) {              // /diff 的 add/del 着色视图
+  hideHero();
+  if (!ticket) startTicket(nowHM());
+  const box = el("div", "diff-view");
+  box.innerHTML = String(text).split("\n").map(ln => {
+    const cls = /^\s*\+/.test(ln) ? " add" : (/^\s*-/.test(ln) ? " del" : "");
+    return `<span class="dline${cls}">${esc(ln) || " "}</span>`;
+  }).join("");
+  ticket.body.appendChild(box);
+  announce("差异已显示");
+  scrollDown();
+}
 function renderTodos(todos) {
   if (!todos || !todos.length) return;
   hideHero();
@@ -591,10 +603,22 @@ function addHistoryThink(wrap, body) {
     think.classList.toggle("open"));
   wrap.appendChild(think);
 }
-function renderHistory(data) {
-  ticketNo = 0;                                   // 历史回放重新编号
+const HIST_PAGE = 200;                    // 历史分页：每页回放的消息数
+let histMsgs = [], histStart = 0;
+function histBoundary(msgs, start) {      // 向前对齐到 user 消息（工单边界）
+  while (start > 0 && msgs[start] && msgs[start].role !== "user") start--;
+  return start;
+}
+function renumberTickets() {
+  chat.querySelectorAll(".ticket .tk-no").forEach((no, i) => {
+    no.textContent = "Nº " + padNo(i + 1);
+  });
+}
+function renderHistRange(start, end) {
+  ticketNo = chat.querySelectorAll(".ticket").length;
   let groupHasError = false;
-  for (const m of data.messages || []) {
+  for (let i = start; i < end; i++) {
+    const m = histMsgs[i];
     if (m.role === "user") {
       closeTicket(groupHasError ? "ERRORS" : "DONE");
       groupHasError = false;
@@ -624,6 +648,30 @@ function renderHistory(data) {
     }
   }
   closeTicket(groupHasError ? "ERRORS" : "DONE");
+  renumberTickets();
+  if (histStart > 0) {                    // 还有更早的历史 → 顶部加载入口
+    chat.querySelectorAll(".load-older").forEach(b => b.remove());
+    const b = el("button", "load-older",
+      `↑ 加载更早的 ${Math.min(HIST_PAGE, histStart)} 条消息`);
+    b.addEventListener("click", loadOlderHistory);
+    chat.prepend(b);
+  }
+}
+function loadOlderHistory() {
+  const anchor = chat.querySelector(".msg.user");   // 记住当前顶部位置
+  const anchorText = anchor ? anchor.textContent : "";
+  chat.innerHTML = "";
+  ticket = null; ticketErr = false;
+  histStart = histBoundary(histMsgs, Math.max(0, histStart - HIST_PAGE));
+  renderHistRange(histStart, histMsgs.length);
+  const target = [...chat.querySelectorAll(".msg.user")]
+    .find(m => m.textContent === anchorText);
+  if (target) target.scrollIntoView({ block: "start" });
+}
+function renderHistory(data) {
+  histMsgs = data.messages || [];
+  histStart = histBoundary(histMsgs, Math.max(0, histMsgs.length - HIST_PAGE));
+  renderHistRange(histStart, histMsgs.length);
   ticketErr = false;
   renderTodos(data.todos);
 }
@@ -651,6 +699,7 @@ async function send() {
       const r = await api("/api/command", { line: text });
       if (r.turn) { await api("/api/turn", { prompt: r.turn }); return; }
       if (r.list) { showPickList("选择回退点", r.list, r.hint, "/rewind"); return; }
+      if (r.kind === "diff") { renderDiffView(r.output); refreshStatus(); return; }
       sysLine("info", r.output || "（完成）");
       refreshStatus();
     } else if (text.startsWith("!")) {               // ! 直通本地执行

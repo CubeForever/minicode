@@ -750,7 +750,7 @@ class WebUIServer:
             for path_, diff in diffs:
                 out.append(path_ + ":")
                 out.extend("  " + ln for ln in diff.splitlines()[:60])
-            return {"output": "\n".join(out)}
+            return {"output": "\n".join(out), "kind": "diff"}
         if name == "limit":
             if not arg:
                 return {"output": f"上下文长度：{cfg.context_limit:,} tok"}
