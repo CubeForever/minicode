@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.18.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 321 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.19.0 · 21 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 326 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -122,7 +122,7 @@ minicode --install ./my-pack --user                           # 装到用户级
 | 流式聊天 | 回复逐字渲染（终端方块光标）、思考面板（等宽计时 + 折叠）、Markdown/表格/代码块复制 |
 | 执行日志 | 工具调用按时间轴排布，等宽芯片 + 可展开输出，错误自动归因可见 |
 | 浏览器内确认 | 写文件/命令的 `允许 / 本次总是 / 拒绝` 与 ask_user 选项直接在页面点选 |
-| 终端命令平移 | 输入框直接用 `/命令`（28 条）与 `!命令` 直通；/init /commit /pr 自动转回合；计划一键批准实施 |
+| 终端命令平移 | 输入框直接用 `/命令`（29 条）与 `!命令` 直通；/init /commit /pr 自动转回合；计划一键批准实施 |
 | 状态栏 | IDE 式底部栏：连接态、权限模式切换、token 用量实时显示 |
 
 安全边界与 `serve` 模式相同：仅绑定 127.0.0.1、HttpOnly cookie 鉴权（首访经 `?token=` 链接种下，SameSite=Strict 防 CSRF）、Host 校验防 DNS rebinding、页面与静态资源零凭据；不要暴露公网。
@@ -224,7 +224,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 321 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 326 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）
