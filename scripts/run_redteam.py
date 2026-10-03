@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 import run_eval  # noqa: E402  复用任务装载与沙箱搭建
+from minicode.redteam import LABELING_TABLE  # noqa: E402
 
 DEFAULT_TASKS = ["bugfix-off-by-one", "feature-cli-flag", "refactor-rename-symbol"]
 
@@ -80,14 +81,40 @@ def _diff_vs_setup(task: dict, sandbox: Path) -> str:
     return "\n\n".join(chunks)[:14000]
 
 
+def assemble_report(tid: str, ok: bool, diff: str, report: str,
+                    sandbox: Path) -> str:
+    """盲标材料。小节的顺序就是协议本身:
+    元信息 → diff(自查材料)→ 红队报告(对照对象)→ 空白三列表。
+    diff 必须先于红队报告落盘——沙箱已删,没有这一节盲标无法执行
+    (v0.23.2 修复:此前 diff 只进了红队 prompt,标注被报告锚定)。
+    """
+    seen = min(len(diff), 14000)
+    trunc = (f"\n> 红队实际收到前 {seen} / {len(diff)} 字符(超出部分其未评审;"
+             "报告如含「未覆盖区域」一节,以此为准)\n") if len(diff) > 14000 else ""
+    return (f"# 红队 precision 标注 — {tid}\n\n"
+            f"- 时间:{time.strftime('%Y-%m-%d %H:%M')}\n"
+            f"- 校验结果:{'通过' if ok else '未通过(解法本身有问题,发现需重新定性)'}\n"
+            f"- 沙箱:{sandbox}\n\n"
+            "## 标注协议(顺序不能反)\n\n"
+            "1. **只读下一节 diff**,把自己看到的潜在问题写下来;\n"
+            "2. 写完后再往下看红队报告,逐条对照;\n"
+            "3. 填最后的空白三列表。直接跳到报告 = 本份标注作废(锚定)。\n\n"
+            "## 待评审改动(diff)— 自查材料\n\n"
+            f"```diff\n{diff}\n```\n" + trunc
+            + "## 红队报告\n\n" + (report or "(红队无输出)").strip()
+            + "\n\n" + LABELING_TABLE)
+
+
 def main() -> int:
-    from minicode.redteam import build_redteam_prompt, LABELING_TABLE
+    from minicode.redteam import build_redteam_prompt
     ap = argparse.ArgumentParser(description="红队 precision 标注工作流")
     ap.add_argument("--task", default="")
     ap.add_argument("--all", action="store_true", help="跑默认 3 个标注任务")
     ap.add_argument("--tasks", default=str(ROOT / "eval" / "tasks"))
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--out", default=str(ROOT / "eval" / "redteam"))
+    ap.add_argument("--keep-sandbox", action="store_true",
+                    help="保留任务沙箱目录(默认评审后清理)")
     args = ap.parse_args()
 
     ids = DEFAULT_TASKS if args.all else ([args.task] if args.task else [])
@@ -124,16 +151,15 @@ def main() -> int:
                     .strip().splitlines()[-1]).get("result") or "(红队无输出)"
             except (json.JSONDecodeError, IndexError, KeyError):
                 report = f"(红队调用失败: {proc.stderr.decode('utf-8', 'replace')[:300]})"
-            header = (f"# 红队 precision 标注 — {tid}\n\n"
-                      f"- 时间:{time.strftime('%Y-%m-%d %H:%M')}\n"
-                      f"- 校验结果:{'通过' if ok else '未通过(解法本身有问题,发现需重新定性)'}\n"
-                      f"- 评审对象:该解法的全部改动(下方 diff 已随报告交给红队)\n\n"
-                      + report + "\n\n" + LABELING_TABLE)
+            text = assemble_report(tid, ok, diff, report, sandbox)
             out = outdir / f"{tid}-{time.strftime('%Y%m%d-%H%M%S')}.md"
-            out.write_text(header, encoding="utf-8")
+            out.write_text(text, encoding="utf-8")
             print(f"[✓] {tid} → {out}")
         finally:
-            shutil.rmtree(sandbox, ignore_errors=True)
+            if args.keep_sandbox:
+                print(f"    沙箱保留:{sandbox}")
+            else:
+                shutil.rmtree(sandbox, ignore_errors=True)
     print("\n下一步:按文件内盲标流程人工填写三列表;"
           "统计\"否\"的比例 = 红队提示词误报率。")
     return 0

@@ -8,6 +8,7 @@
 - 自检修复回合不做技能提炼;提炼失败在 debug 模式留痕。
 """
 import json
+import sys
 from pathlib import Path
 
 
@@ -210,3 +211,25 @@ def test_autoskill_failure_logged_in_debug(tmp_path, monkeypatch):
     agent.ui = ui
     cli_mod._maybe_autoskill(agent, 3, 0)
     assert any("[autoskill]" in w and "boom" in w for w in ui.warns)
+
+
+def test_redteam_report_carries_diff_before_findings(tmp_path):
+    """v0.23.2 盲标协议回归:diff 必须先于红队报告落盘(沙箱即焚,
+    没有这一节盲标无法执行);截断时红队实收长度必须写明。"""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        import run_redteam
+    finally:
+        sys.path.remove(str(ROOT / "scripts"))
+    text = run_redteam.assemble_report("t1", True,
+                                       "diff --git a/app.py\n+ok",
+                                       "## 红队报告\n- [应修] 未判空",
+                                       tmp_path)
+    i_diff = text.index("## 待评审改动")
+    i_report = text.index("## 红队报告\n")
+    assert i_diff < i_report                       # 自查材料在前
+    assert "标注协议" in text and str(tmp_path) in text
+    assert "app.py" in text.split("## 红队报告")[0]
+    big = "x" * 15000
+    t2 = run_redteam.assemble_report("t2", True, big, "r", tmp_path)
+    assert "红队实际收到前 14000 / 15000" in t2    # 截断透明(报告侧)
