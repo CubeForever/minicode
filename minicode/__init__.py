@@ -1,3 +1,3 @@
 """minicode — a Claude Code-style terminal coding agent (stdlib only)."""
 
-__version__ = "0.22.2"
+__version__ = "0.22.3"

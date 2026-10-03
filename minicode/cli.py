@@ -402,15 +402,20 @@ def _run_turn(agent: Agent, text: str, _in_verify: bool = False) -> str:
             # 每轮修复后重新跑 verify，否则"自检→修复→又自检→再修复"
             # 只要每轮还在改文件且自检持续失败就会无界递归。
             _self_verify(agent, mutated)
-        _maybe_autoskill(agent, files_changed, errors)
+        _maybe_autoskill(agent, files_changed, errors, in_verify=_in_verify)
     return status
 
 
-def _maybe_autoskill(agent: Agent, files_changed: int, errors: int) -> None:
+def _maybe_autoskill(agent: Agent, files_changed: int, errors: int,
+                     in_verify: bool = False) -> None:
     """经验引擎触发门：跨多文件的成功 + (自检通过 或 有试错) →
-    从本回合提炼可复用技能，沉淀到 .minicode/skills/auto-*（v0.22）。"""
+    从本回合提炼可复用技能，沉淀到 .minicode/skills/auto-*（v0.22）。
+
+    in_verify=True（自检修复回合）直接跳过：修复素材是"自检失败的
+    挣扎过程"，可能沉淀出负面技能（如"如何绕过自检"）——v0.22.3。
+    """
     import os as _os
-    if _os.environ.get("MINICODE_NO_AUTO_SKILL"):
+    if in_verify or _os.environ.get("MINICODE_NO_AUTO_SKILL"):
         return
     if not should_autoskill(files_changed, errors, agent.last_verify_ok):
         return

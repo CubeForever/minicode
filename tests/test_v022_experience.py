@@ -279,6 +279,30 @@ def test_p_mode_runs_after_turn(tmp_path):
     assert marker.exists(), "turn_end hook 未随 _after_turn 执行"
 
 
+def test_autoskill_skipped_in_verify_fix_turns(tmp_path, monkeypatch):
+    """v0.22.3：自检修复回合不做技能提炼——素材是"自检失败的挣扎过程"，
+    可能沉淀出负面技能（如"如何绕过自检"）。条件全满足也必须跳过。"""
+    import minicode.cli as cli_mod
+
+    called = []
+    monkeypatch.setattr(cli_mod, "maybe_generate_skill",
+                        lambda *a, **k: called.append(a) or (None, False))
+    agent = make_agent(tmp_path, FakeProvider([]))
+
+    class _StubProvider:   # 非 Fake 的桩：绕过"演示模型不沉淀"守卫
+        name = "stub"
+    agent.provider = _StubProvider()
+    agent.last_verify_ok = False
+    agent.session.add({"role": "user", "content": "hi"})  # 提炼需要非空转录
+    # 修复回合：哪怕改了 5 个文件 + 3 次试错（should_autoskill 本会放行）
+    cli_mod._maybe_autoskill(agent, 5, 3, in_verify=True)
+    assert not called
+    # 正常回合：门照常工作
+    agent.last_verify_ok = True
+    cli_mod._maybe_autoskill(agent, 2, 0, in_verify=False)
+    assert len(called) == 1 and "User: hi" in called[0][2]   # 正常路径未被一刀切
+
+
 def test_verify_fix_turns_do_not_reenter_gate(tmp_path, monkeypatch):
     """v0.22.2 防嵌套回归：自检的修复回合不得重入自检门。
 
