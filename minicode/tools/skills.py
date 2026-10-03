@@ -229,9 +229,13 @@ def write_autoskill(cwd, raw: str) -> Tuple[Optional[Path], bool]:
     target = _project_skills_dir(cwd) / (AUTO_PREFIX + slug)
     if (target / SKILL_FILE).exists():
         return target, False   # 已存在：不覆盖，视为沉淀过
+    # frontmatter name 必须与目录名一致（auto- 前缀）：catalog 键、
+    # load_skill 的目录定位、.hits.json 遥测键、归档判定键四处同源。
+    # 此前 name=slug 与目录 auto-<slug> 错位，导致技能加载失败 + 命中
+    # 永远查不到（30 天后重度使用也会被误归档）——v0.22.1 修复。
     try:
         target.mkdir(parents=True, exist_ok=True)
-        front = (f"---\nname: {slug}\ndescription: "
+        front = (f"---\nname: {AUTO_PREFIX + slug}\ndescription: "
                  f"{(desc or slug)[:160]}\n---\n")
         (target / SKILL_FILE).write_text(front + body.strip() + "\n",
                                          encoding="utf-8")

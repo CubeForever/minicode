@@ -159,7 +159,7 @@ def test_write_autoskill_and_dedup(tmp_path):
     assert created and path is not None
     assert path.name == "auto-release-check"              # auto- 前缀单层目录
     assert (path / "SKILL.md").exists()
-    assert "release-check" in skills_catalog(tmp_path)    # 既有发现层直接可见
+    assert "auto-release-check" in skills_catalog(tmp_path)  # 既有发现层直接可见
     _p2, created2 = write_autoskill(tmp_path, SKILL_MD)
     assert not created2                                   # 重名不覆盖
 
@@ -187,13 +187,50 @@ def test_stale_autoskill_hidden_then_archived(tmp_path):
     (d / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
     old = time.time() - 31 * 86400
     os.utime(d, (old, old))                                  # 目录 mtime 即判龄依据
-    assert "release-check" not in skills_catalog(tmp_path)   # 过期：清单不列出
+    assert "auto-release-check" not in skills_catalog(tmp_path)  # 过期：清单不列出
     moved = archive_stale_autoskills(tmp_path)
     assert moved == 1
     assert not d.exists()
     assert (tmp_path / ".minicode" / "skills" / "archive" / (AUTO_PREFIX + "old")
             / "SKILL.md").exists()
     assert archive_stale_autoskills(tmp_path) == 0           # 幂等
+
+
+def test_auto_skill_loadable_and_hits_consistent(tmp_path):
+    """v0.22.1 键名对齐回归：此前 frontmatter name 与目录名错位，
+    技能加载返回 None、命中永远记不到归档判定键下（重度使用也误归档）。"""
+    path, created = write_autoskill(tmp_path, SKILL_MD)
+    name = path.name                       # auto-release-check
+    assert name in skills_catalog(tmp_path)              # catalog 键 == 目录名
+    body = load_skill(tmp_path, name)                    # skill 工具可加载
+    assert body and "核对四处版本号" in body
+    assert _hits(tmp_path)[name]["hits"] == 1            # 遥测键 == 归档判定键
+    os.utime(path, (time.time() - 31 * 86400,) * 2)      # 过期但有命中
+    assert name in skills_catalog(tmp_path)              # 命中 → 不隐藏
+    assert archive_stale_autoskills(tmp_path) == 0       # 命中 → 不归档
+
+
+def test_archive_never_touches_user_skills(tmp_path, monkeypatch):
+    """归档只作用于项目级 auto-*：用户级 ~/.minicode/skills 永不被某项目误归档。"""
+    import minicode.tools.skills as skills_mod
+    fake_home = tmp_path / "home"
+    user_dir = fake_home / ".minicode" / "skills" / (AUTO_PREFIX + "user-skill")
+    user_dir.mkdir(parents=True)
+    (user_dir / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
+    monkeypatch.setattr(skills_mod.Path, "home",
+                        classmethod(lambda cls: fake_home))
+    old = time.time() - 31 * 86400
+    os.utime(user_dir, (old, old))
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    pd = proj / ".minicode" / "skills" / (AUTO_PREFIX + "proj-skill")
+    pd.mkdir(parents=True)
+    (pd / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
+    os.utime(pd, (old, old))
+    moved = archive_stale_autoskills(proj)
+    assert moved == 1                                     # 只动项目级
+    assert user_dir.exists()                              # 用户级原封不动
+    assert not pd.exists()
 
 
 # ---------- 4. 前置修复回归 ----------

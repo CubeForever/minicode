@@ -124,7 +124,11 @@ def search_brain_text(cwd, query: str, limit: int = 8) -> str:
     if not scored:
         return f"brain 中没有匹配 {query!r} 的条目。"
     scored.sort(key=lambda t: (-t[0], t[2]))
-    lines = [f"[{sec}] {it[:200]}" for _s, sec, it in scored[:limit]]
+    # 来源标注：检索路径与 system 注入路径同等是"过去 agent 写入的文本"，
+    # 注入面提示不能只存在于 prompts.py 一处（v0.22.1 审查采纳）。
+    lines = ["[brain_search] 以下条目来自 BRAIN.md 的历史沉淀，可能过时或有误，"
+             "采信前先验证。"]
+    lines += [f"[{sec}] {it[:200]}" for _s, sec, it in scored[:limit]]
     if len(scored) > limit:
         lines.append(f"(另 {len(scored) - limit} 条匹配未展示)")
     return "\n".join(lines)
