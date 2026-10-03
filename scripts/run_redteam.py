@@ -38,6 +38,11 @@ import run_eval  # noqa: E402  复用任务装载与沙箱搭建
 from minicode.redteam import LABELING_TABLE  # noqa: E402
 
 DEFAULT_TASKS = ["bugfix-off-by-one", "feature-cli-flag", "refactor-rename-symbol"]
+# 第二批(中等难度):红队能发挥的场域——解析逻辑/造测试/多步实现。
+# 第一批(简单任务)误报率 0%,但"无发现"多为正确行为,不足以判断
+# 提示词上限(2026-10-03 第一批标注基线,详见 eval/README)。
+BATCH2_TASKS = ["bugfix-json-syntax", "feature-write-tests",
+                "feature-implement-spec"]
 
 
 def _solve(task: dict, timeout: int, sandbox: Path) -> bool:
@@ -110,6 +115,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="红队 precision 标注工作流")
     ap.add_argument("--task", default="")
     ap.add_argument("--all", action="store_true", help="跑默认 3 个标注任务")
+    ap.add_argument("--batch2", action="store_true",
+                    help="跑第二批(中等难度:json-syntax/write-tests/implement-spec)")
     ap.add_argument("--tasks", default=str(ROOT / "eval" / "tasks"))
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--out", default=str(ROOT / "eval" / "redteam"))
@@ -117,7 +124,12 @@ def main() -> int:
                     help="保留任务沙箱目录(默认评审后清理)")
     args = ap.parse_args()
 
-    ids = DEFAULT_TASKS if args.all else ([args.task] if args.task else [])
+    if args.batch2:
+        ids = BATCH2_TASKS
+    elif args.all:
+        ids = DEFAULT_TASKS
+    else:
+        ids = [args.task] if args.task else []
     if not ids:
         print("用 --task <id> 或 --all", file=sys.stderr)
         return 1

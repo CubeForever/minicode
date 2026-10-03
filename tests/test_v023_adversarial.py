@@ -67,7 +67,8 @@ def make_agent(tmp_path, provider, mode="yolo") -> Agent:
 def test_redteam_prompt_contains_attack_surface_and_diff():
     p = build_redteam_prompt("diff --git a/x.py", scope="只看并发")
     assert "diff --git a/x.py" in p
-    for kw in ("边界条件", "并发", "注入", "回归", "无发现", "阻断|应修|可选"):
+    for kw in ("边界条件", "并发", "注入", "回归", "无发现", "阻断|应修|可选",
+               "穷举可疑点", "证伪", "已证伪的可疑点"):   # v0.23.3 发散-收敛
         assert kw in p
     assert "只看并发" in p
 
