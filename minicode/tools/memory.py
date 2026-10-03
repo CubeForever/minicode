@@ -4,9 +4,14 @@ Stored at ``<project>/.minicode/BRAIN.md``. The model records durable
 knowledge (facts / gotchas / decisions / failed approaches) via the
 ``brain_write`` tool; every later session inherits it through the system
 prompt. Users can edit the file freely — it is re-parsed each load.
+
+v0.22 起 brain 注入按 section 配额均衡截取（裸截断会整段丢掉尾部），
+被省略的条目可通过 ``brain_search`` 工具按关键词检索（渐进披露：
+system 段保持稳定以维持 prompt 缓存，全量记忆按需获取）。
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -50,8 +55,103 @@ def _parse(text: str) -> Dict[str, List[str]]:
 
 
 def render_brain(cwd, cap: int = 4000) -> str:
+    """按 section 配额均衡渲染（v0.22）。
+
+    旧版 ``text[:cap]`` 裸截断：Facts 一节超长时 Gotchas/Decisions 整段
+    消失。现在每个 section 平分配额，超出部分计数并在结尾提示用
+    brain_search 检索——system 注入保持有界（prompt 缓存友好），
+    召回率交给检索工具。
+    """
     text = load_brain_text(cwd).strip()
-    return text[:cap] if text else ""
+    if not text:
+        return ""
+    if len(text) <= cap:
+        return text
+    sections = _parse(text)
+    active = [name for name in SECTION_ORDER if sections.get(name)]
+    if not active:
+        return text[:cap]
+    per = max(300, cap // len(active))
+    out: List[str] = []
+    omitted = 0
+    for name in active:
+        items = sections[name]
+        out.append(f"## {name}")
+        used = 0
+        kept = 0
+        for it in items:
+            line = f"- {it}"
+            if kept and used + len(line) > per:
+                omitted += len(items) - kept
+                break
+            out.append(line)
+            used += len(line)
+            kept += 1
+    if omitted:
+        out.append(f"(brain 另有 {omitted} 条未展示——"
+                   "用 brain_search 工具按关键词检索全部经验)")
+    result = "\n".join(out)
+    return result[:cap] if len(result) > cap else result
+
+
+def _terms(query: str) -> set:
+    """零依赖检索分词：英文按 [a-z0-9_]，中文按 bigram（单字兜底）。"""
+    q = (query or "").lower()
+    en = set(re.findall(r"[a-z0-9_]{2,}", q))
+    cjk = re.findall(r"[\u4e00-\u9fff]", q)
+    if len(cjk) > 1:
+        en.update(cjk[i] + cjk[i + 1] for i in range(len(cjk) - 1))
+    elif cjk:
+        en.update(cjk)
+    return en
+
+
+def search_brain_text(cwd, query: str, limit: int = 8) -> str:
+    """按关键词检索全部 brain 条目，返回打分最高的若干条。"""
+    text = load_brain_text(cwd)
+    if not text.strip():
+        return "brain 为空（用 brain_write 沉淀第一条经验）。"
+    terms = _terms(query)
+    if not terms:
+        return "查询为空——请给出关键词。"
+    scored = []
+    for section, items in _parse(text).items():
+        for it in items:
+            hay = (it + " " + section).lower()
+            score = sum(1 for t in terms if t in hay)
+            if score > 0:
+                scored.append((score, section, it))
+    if not scored:
+        return f"brain 中没有匹配 {query!r} 的条目。"
+    scored.sort(key=lambda t: (-t[0], t[2]))
+    lines = [f"[{sec}] {it[:200]}" for _s, sec, it in scored[:limit]]
+    if len(scored) > limit:
+        lines.append(f"(另 {len(scored) - limit} 条匹配未展示)")
+    return "\n".join(lines)
+
+
+class BrainSearchTool(Tool):
+    name = "brain_search"
+    kind = "read"
+    description = (
+        "Search the project brain (.minicode/BRAIN.md) for past facts, gotchas, "
+        "decisions and failed approaches by keyword. Use it when the injected "
+        "brain excerpt seems incomplete, or before repeating work the project "
+        "may have done before.")
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string",
+                      "description": "Keywords, e.g. 'deploy timeout' or '部署 超时'."},
+        },
+        "required": ["query"],
+    }
+
+    def describe_call(self, args: dict) -> str:
+        return str(args.get("query") or "")
+
+    def run(self, args: dict, ctx: ToolContext) -> str:
+        return search_brain_text(ctx.cwd, str(args.get("query") or ""))
 
 
 def append_brain(cwd, kind: str, content: str) -> Tuple[bool, str]:

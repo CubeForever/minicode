@@ -10,7 +10,7 @@ from .notebook import NotebookEditTool
 from .patch import ApplyPatchTool
 from .plan import ExitPlanTool
 from .ask_user import AskUserTool
-from .memory import BrainWriteTool
+from .memory import BrainSearchTool, BrainWriteTool
 from .panel import ConsultPanelTool
 from .skills import SkillTool
 
@@ -20,14 +20,15 @@ __all__ = [
     "ListDirTool", "BashTool", "BashOutputTool", "BashKillTool",
     "ShellState", "detect_shell", "TodoWriteTool", "DispatchAgentTool",
     "WebFetchTool", "WebSearchTool", "NotebookEditTool", "ApplyPatchTool",
-    "ExitPlanTool", "AskUserTool", "BrainWriteTool", "ConsultPanelTool",
-    "SkillTool", "build_registry",
+    "ExitPlanTool", "AskUserTool", "BrainWriteTool", "BrainSearchTool",
+    "ConsultPanelTool", "SkillTool", "build_registry",
 ]
 
 
 def build_registry(shell_state, read_only: bool = False) -> ToolRegistry:
     tools = [ReadFileTool(), GlobTool(), GrepTool(), ListDirTool(),
-             WebFetchTool(), WebSearchTool(), ConsultPanelTool(), SkillTool()]
+             WebFetchTool(), WebSearchTool(), ConsultPanelTool(), SkillTool(),
+             BrainSearchTool()]
     if not read_only:
         tools += [WriteFileTool(), EditFileTool(), ApplyPatchTool(),
                   NotebookEditTool(),

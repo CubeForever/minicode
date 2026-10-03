@@ -44,9 +44,13 @@ class ToolRegistry:
     def __init__(self, tools: List[Tool]):
         self.tools: Dict[str, Tool] = {}
         for t in tools:
-            if t.name in self.tools:
-                raise ValueError(f"duplicate tool name: {t.name}")
-            self.tools[t.name] = t
+            self.register(t)
+
+    def register(self, tool: Tool) -> None:
+        """运行时动态注册（mcp_search 渐进披露用）。重名拒绝。"""
+        if tool.name in self.tools:
+            raise ValueError(f"duplicate tool name: {tool.name}")
+        self.tools[tool.name] = tool
 
     def get(self, name: str) -> Optional[Tool]:
         return self.tools.get(name)

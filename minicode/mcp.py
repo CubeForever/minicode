@@ -27,7 +27,9 @@ PROTOCOL_VERSION = "2025-06-18"
 LEGACY_PROTOCOL_VERSION = "2024-11-05"
 DEFAULT_TIMEOUT = 30
 MAX_RESOURCES_PER_SERVER = 20
-MAX_PROMPTS_PER_SERVER = 30
+# 渐进披露阈值：MCP 工具+资源总数超过它时不把全部 schema 塞进上下文，
+# 改为注册 mcp_search 元工具，模型按关键词检索、命中即动态注册（v0.22）。
+MCP_INLINE_LIMIT = 15
 
 
 def _version() -> str:
@@ -391,6 +393,62 @@ class McpResourceTool(Tool):
 
     def run(self, args: dict, ctx) -> str:
         return self._client.read_resource(self._uri)
+
+
+class McpSearchTool(Tool):
+    """渐进披露元工具（对标 Anthropic Tool Search）。
+
+    MCP 工具总数超过 MCP_INLINE_LIMIT 时，不把全部 schema 塞进 system，
+    只注册本工具；模型按关键词检索，命中的真实工具随即动态注册进
+    registry，下一轮即可正常调用。会话内加载一次后永久可用（registry
+    持有），重复检索自动跳过已加载项。kind=meta：不触发权限确认。
+    """
+    name = "mcp_search"
+    kind = "meta"
+
+    def __init__(self, pool: List[Tool], registry: "object"):
+        self._pool = pool            # connect_all() 的全部工具（已构建）
+        self._registry = registry    # ToolRegistry，命中后 register
+        self.description = (
+            f"Search and load MCP tools on demand ({len(pool)} available across "
+            "configured servers). Returns the loaded tool names — call them "
+            "directly afterwards. Use when no mcp__ tool you need is loaded yet.")
+        self.input_schema = {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "Keywords from the task, e.g. 'jira issue create'."},
+            },
+            "required": ["query"],
+        }
+
+    def describe_call(self, args: dict) -> str:
+        return str(args.get("query") or "")
+
+    def run(self, args: dict, ctx) -> str:
+        query = str(args.get("query") or "")
+        terms = set(re.findall(r"[a-z0-9_]{2,}", query.lower()))
+        scored = []
+        for t in self._pool:
+            if t.name in self._registry.tools:
+                continue   # 已加载
+            hay = (t.name + " " + t.description).lower()
+            score = sum(1 for term in terms if term in hay)
+            scored.append((score, t))
+        scored.sort(key=lambda st: -st[0])
+        picked = [t for s, t in scored[:8] if s > 0] or \
+                 [t for _s, t in scored[:3]]
+        if not picked:
+            loaded = sum(1 for t in self._pool if t.name in self._registry.tools)
+            return (f"没有更多可加载的 MCP 工具（总数 {len(self._pool)}，"
+                    f"已加载 {loaded}）。")
+        for t in picked:
+            try:
+                self._registry.register(t)
+            except ValueError:
+                pass
+        return ("已加载以下 MCP 工具，现在可以直接调用：\n"
+                + "\n".join(f"- {t.name}: {t.description[:140]}" for t in picked))
 
 
 class McpManager:

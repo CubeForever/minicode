@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.22.0 (2026-10-03)
+
+经验引擎 + 渐进披露 + 度量修复（v0.22 主题：**越用越强，且能证明**）：
+
+**度量基础设施修复（前置，审查发现的 P0）**
+- `-p` 模式此前跳过整个回合收尾：token 统计 / microcompaction / turn_end hook / 失败复盘全部不执行（eval 基线 in_tok 恒为 0 的根因）——已补 `_after_turn`
+- run_eval.py 改用 `--output-format json` 从结构化 usage 提取 token，替换与实际输出不匹配的 stdout 正则
+- **P0-2**：系统提示唯一组装点 `assemble_system_prompt`（prompts.py）——修复 4 处重建丢 skills 段（cli `/plans done`、webui `/brain clear`、`/add-dir`、`/output-style`），自生成技能以它为飞轮入口
+- 跑出 13 任务完整基线（eval/baselines，成功率/时长/token 全量可用）
+
+**Brain 召回修复 + 检索工具（22 号内置工具 brain_search）**
+- 旧版 brain 注入是裸字符截断（`text[:4000]`）：Facts 一节超长时 Gotchas/Decisions 整段消失；新版按 section 配额均衡渲染，结尾注明省略条数
+- 新增 `brain_search` 工具：按关键词检索全部脑条目（零依赖分词，英文按词、中文按 bigram）——system 注入保持有界以维持 prompt 缓存，召回率交给检索（渐进披露思路应用于记忆）
+
+**MCP 渐进披露（对标 Anthropic Tool Search）**
+- MCP 工具+资源总数 >15（MCP_INLINE_LIMIT）时不再把全部 schema 塞进上下文：只注册 `mcp_search` 元工具，模型按关键词检索、命中即动态注册进 registry（ToolRegistry 新增 `register()`），下一轮即可直接调用；会话内加载一次永久可用，重复检索自动跳过
+- 大 MCP 服务器的 schema token 开销从 O(全部工具) 降为 O(用到)；小服务器零变化
+- 顺手清理死常量 MAX_PROMPTS_PER_SERVER（v0.19 遗留，从未使用）
+
+**Skills 自生成（经验引擎，对标 Agent Skills 生态的空白点）**
+- 触发门 `should_autoskill`（纯函数）：跨 ≥2 文件的成功回合 +（自检通过 或 工具试错 ≥2 次）才提炼——单文件顺手改/一把过不沉淀
+- 信号层补齐：`agent.turn_errors`（回合内工具错误计数）、`agent.last_verify_ok`（自检门外露）、每回合改动文件数（checkpoint 差分）
+- 提炼走 `provider.stream_text`，输出经 frontmatter 校验落盘 `.minicode/skills/auto-<name>/SKILL.md`——单层前缀命名完全复用既有发现层（审查修正：两层目录会被 glob 丢弃）；重名不覆盖；无效输出拒绝；假模型/异常一律静默跳过
+- 命中遥测：load_skill 落笔 `.hits.json`（次数+最近使用）；/skills 面板显示命中次数并触发归档
+- 防膨胀：自生成技能 30 天零命中 → archive_stale_autoskills 移入 archive/（单层 glob 天然不可见，可手工捞回）
+
+**测试**：新增 13 项（配额均衡/中英检索/动态注册/触发门真值表/提炼落盘去重/遥测/过期归档/P0-2 回归/-p 生命周期回归），全量 369 项。
+
 ## 0.21.0 (2026-10-01)
 
 编辑可靠性三件套 + eval 回路（v0.21 主题：**让编辑一次成功，并用度量验证收益**）：

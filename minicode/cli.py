@@ -19,12 +19,13 @@ from .agent import MODES, Agent, Interrupted
 from .checkpoints import CheckpointManager, prune_checkpoint_roots
 from .config import apply_restricted_config, load_config
 from .llm import LLMError, make_provider
-from .mcp import McpManager
+from .mcp import MCP_INLINE_LIMIT, McpManager, McpSearchTool
 from .prompts import SUBAGENT_PROMPT, REVIEW_PROMPT
 from .session import SESSIONS_DIR, Session
 from .tools import build_registry
 from .tools.base import ToolContext, ToolError, ToolRegistry
 from .tools.shell import ShellState, detect_shell
+from .tools.skills import maybe_generate_skill, should_autoskill
 from .ui import MODE_LABELS, Spinner, SubUI, UI, _fmt_tokens, cyan, dim, gray, green, red, yellow
 
 BUILTIN_COMMANDS = {
@@ -247,13 +248,25 @@ def _project_trust_gate(cfg, ui) -> tuple:
     return False, False
 
 
+def _make_registry(base_tools, mcp_tools, ui):
+    """组装工具注册表。MCP 工具总数超阈值时启用渐进披露：只注册
+    mcp_search 元工具，模型按需检索加载（v0.22，对标 Anthropic Tool
+    Search——大 MCP 服务器的 schema 开销从 O(全部) 降为 O(用到)）。"""
+    if len(mcp_tools) <= MCP_INLINE_LIMIT:
+        return ToolRegistry(base_tools + mcp_tools)
+    registry = ToolRegistry(base_tools)
+    registry.register(McpSearchTool(mcp_tools, registry))
+    ui.info(f"MCP 工具/资源共 {len(mcp_tools)} 个（>{MCP_INLINE_LIMIT}），"
+            "已启用渐进披露：模型先用 mcp_search 按需检索加载")
+    return registry
+
+
 def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     shell_state = ShellState(cfg.cwd, detect_shell(cfg.shell))
     ckpt_root = (Path.home() / ".minicode" / "checkpoints"
                  / time.strftime("%Y%m%d-%H%M%S"))
     base_tools = list(build_registry(shell_state).tools.values())
-    if mcp_manager is not None:
-        base_tools += mcp_manager.connect_all()
+    mcp_tools = mcp_manager.connect_all() if mcp_manager is not None else []
     if getattr(cfg, "plugins_allowed", True):
         from .plugins import load_plugin_tools
         plugin_tools, plugin_errors = load_plugin_tools(cfg.cwd)
@@ -302,7 +315,8 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
                          "prompt_chars": len(prompt)})
         return result
 
-    agent = Agent(provider, session, ui, cfg, ToolRegistry(base_tools),
+    agent = Agent(provider, session, ui, cfg,
+                  _make_registry(base_tools, mcp_tools, ui),
                   checkpoints=CheckpointManager(ckpt_root))
     agent.ctx.agent_factory = factory
     from .prompts import assemble_system_prompt
@@ -380,8 +394,39 @@ def _run_turn(agent: Agent, text: str) -> str:
     _postmortem(agent, status)
     if status == "ok":
         mutated = bool(agent.checkpoints and len(agent.checkpoints.entries) > n0)
+        files_changed = len({e["path"] for e in agent.checkpoints.entries[n0:]}) \
+            if agent.checkpoints else 0
+        errors = agent.turn_errors   # verify 的修复回合会重置计数，先取快照
         _self_verify(agent, mutated)
+        _maybe_autoskill(agent, files_changed, errors)
     return status
+
+
+def _maybe_autoskill(agent: Agent, files_changed: int, errors: int) -> None:
+    """经验引擎触发门：跨多文件的成功 + (自检通过 或 有试错) →
+    从本回合提炼可复用技能，沉淀到 .minicode/skills/auto-*（v0.22）。"""
+    import os as _os
+    if _os.environ.get("MINICODE_NO_AUTO_SKILL"):
+        return
+    if not should_autoskill(files_changed, errors, agent.last_verify_ok):
+        return
+    from .fake import FakeProvider
+    prov = getattr(agent.provider, "primary", agent.provider)
+    if isinstance(prov, FakeProvider):
+        return   # 演示/脚本模型不沉淀
+    try:
+        msgs = agent.session.messages
+        idx = max(i for i, m in enumerate(msgs) if m.get("role") == "user")
+        digest = agent.session._transcript(msgs[idx:])
+        path, created = maybe_generate_skill(
+            agent.provider, Path(agent.config.cwd), digest,
+            source_hint=Path(agent.config.cwd).name)
+    except Exception:
+        return   # 附加能力，任何失败静默
+    if created and path is not None:
+        agent.ui.info(f"💡 经验沉淀：新技能 {path.name} 已生成"
+                      "（下次相似任务自动可用，/skills 查看）")
+        _rebuild_prompt(agent)   # skills 索引立即生效
 
 
 def _self_verify(agent: Agent, mutated: bool) -> None:
@@ -407,6 +452,7 @@ def _self_verify(agent: Agent, mutated: bool) -> None:
 
     with Spinner("Self-verify"):
         ok, out = run_verify()
+    agent.last_verify_ok = ok   # 经验引擎信号：自检结果外露
     if ok:
         ui.info(f"自检通过 ✔（{cmd}）")
         return
@@ -417,6 +463,7 @@ def _self_verify(agent: Agent, mutated: bool) -> None:
                          f"command: {cmd}\noutput (tail):\n{out[-4000:]}")
         with Spinner("Self-verify"):
             ok, out = run_verify()
+        agent.last_verify_ok = ok
         if ok:
             ui.info(f"自检通过 ✔（{cmd}，第 {attempt} 轮修复后）")
             return
@@ -1240,13 +1287,21 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
             agent.config.context_limit = n
             ui.info(f"上下文长度已设置为 {_fmt_tokens(n)}（{n:,} tok）")
     elif name == "/skills":
-        from .tools.skills import skills_catalog, load_skill
+        from .tools.skills import (_hits, archive_stale_autoskills,
+                                   load_skill, skills_catalog)
+        archived = archive_stale_autoskills(Path.cwd())
+        if archived:
+            ui.info(f"已归档 {archived} 个 30 天未命中的自生成技能"
+                    "（.minicode/skills/archive/ 可捞回）。")
         catalog = skills_catalog(Path.cwd())
         if not catalog:
             ui.info("没有可用技能。可在 .minicode/skills/<name>/SKILL.md 放置工作流技能。")
         else:
+            hits = _hits(Path.cwd())
             for sname, (desc, src_label) in catalog.items():
-                ui.plain(f"  {sname:<28} {gray('[' + src_label + ']')} {desc}")
+                h = (hits.get(sname) or {}).get("hits") or 0
+                tag = gray(f" [命中 {h} 次]") if h else ""
+                ui.plain(f"  {sname:<28} {gray('[' + src_label + ']')} {desc}{tag}")
             ui.info("模型会在任务匹配时自动通过 skill 工具加载；也可让它‘用 xx 技能’。")
         if arg:
             body = load_skill(Path.cwd(), arg)

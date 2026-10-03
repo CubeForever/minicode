@@ -104,6 +104,8 @@ class Agent:
         self.tools_disabled = False      # set when the model rejects tools
         self._error_history = []         # (tool_name, error_signature) for repeat detection
         self._lint_cache = None          # None=未探测 / ""=探测过但无 / 模板
+        self.turn_errors = 0             # 本回合工具错误数（经验引擎信号）
+        self.last_verify_ok = None       # 最近一次自检门结果（True/False/未跑 None）
         self.interrupt_event = threading.Event()  # set → 协作式中断当前回合
         cwd = getattr(config, "cwd", None) or Path.cwd()
         self.ctx = ToolContext(cwd=cwd, config=config, session=session, ui=ui,
@@ -127,6 +129,7 @@ class Agent:
 
     def run_turn(self, user_text: str) -> str:
         self.interrupt_event.clear()   # 上一回合遗留的停止请求不带入新回合
+        self.turn_errors = 0
         self.session.add(user_message(user_text))
         budget = 0
         if self.mode != "plan":
@@ -279,6 +282,7 @@ class Agent:
         sig = (tool_name, error_msg[:80])
         self._error_history.append(sig)
         self._error_history = self._error_history[-10:]
+        self.turn_errors += 1
         repeat_count = sum(1 for s in self._error_history[-3:] if s == sig)
         if repeat_count >= 3:
             suggestions.append("同类错误已连续出现 3 次——停止重试，换策略或用 ask_user 向用户澄清")
