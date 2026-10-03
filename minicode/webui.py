@@ -717,7 +717,7 @@ class WebUIServer:
         from .cli import (_custom_commands, _parse_size, COMMIT_PROMPT,
                           INIT_PROMPT, PR_PROMPT)
         from .llm import list_models
-        from .prompts import REVIEW_PROMPT, build_system_prompt
+        from .prompts import REVIEW_PROMPT, assemble_system_prompt
         from .tools.memory import brain_path, load_brain_text
         agent, cfg = self.agent, self.cfg
         s = agent.session
@@ -807,7 +807,7 @@ class WebUIServer:
                 p = brain_path(cfg.cwd)
                 if p.exists():
                     p.unlink()
-                agent.system_prompt = build_system_prompt(
+                agent.system_prompt = assemble_system_prompt(
                     cfg, agent._prompt_cwd, agent._custom_agents)
                 return {"output": "项目大脑已清空。"}
             text = load_brain_text(cfg.cwd).strip()
@@ -911,7 +911,7 @@ class WebUIServer:
             if not p.is_dir():
                 return {"output": f"目录不存在：{p}"}
             cfg.extra_dirs.append(str(p))
-            agent.system_prompt = build_system_prompt(
+            agent.system_prompt = assemble_system_prompt(
                 cfg, agent._prompt_cwd, agent._custom_agents)
             return {"output": f"已授权访问目录：{p}"}
         if name == "verify":
@@ -927,7 +927,7 @@ class WebUIServer:
             style = arg if arg in ("default", "explanatory") else (
                 "explanatory" if cfg.output_style == "default" else "default")
             cfg.output_style = style
-            agent.system_prompt = build_system_prompt(
+            agent.system_prompt = assemble_system_prompt(
                 cfg, agent._prompt_cwd, agent._custom_agents)
             return {"output": f"输出风格：{style}"}
         if name == "doctor":

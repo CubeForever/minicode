@@ -48,6 +48,29 @@ def load_tasks(tasks_dir: Path) -> list:
     return tasks
 
 
+def _parse_usage(out: str) -> tuple:
+    """从 -p --output-format json 的 stdout 提取 (input, output) token。
+    JSON 解析失败时退回旧的 ▲ 行正则。"""
+    for line in reversed(out.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        u = d.get("usage") or {}
+        if isinstance(u.get("input"), int):
+            return u.get("input") or 0, u.get("output") or 0
+    m = None
+    for m in TOKEN_RX.finditer(out):
+        pass
+    if m:
+        return (int(m.group(1).replace(",", "")),
+                int(m.group(2).replace(",", "")))
+    return 0, 0
+
+
 def _setup_sandbox(sandbox: Path, task: dict) -> None:
     for rel, content in ((task.get("setup") or {}).get("files") or {}).items():
         p = sandbox / rel
@@ -82,14 +105,12 @@ def run_task(task: dict, timeout: int, checks_dir: Path) -> dict:
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "minicode", "-p", task["instruction"],
-                 "--yolo", "--no-save"],
+                 "--yolo", "--no-save", "--output-format", "json"],
                 cwd=str(sandbox), capture_output=True, timeout=timeout,
                 env=env)
             out = proc.stdout.decode("utf-8", errors="replace")
             rec["seconds"] = round(time.time() - t0, 1)
-            for m in TOKEN_RX.finditer(out):
-                rec["in_tok"] = int(m.group(1).replace(",", ""))
-                rec["out_tok"] = int(m.group(2).replace(",", ""))
+            rec["in_tok"], rec["out_tok"] = _parse_usage(out)
         except subprocess.TimeoutExpired:
             rec["seconds"] = round(time.time() - t0, 1)
             rec["error"] = f"agent timeout after {timeout}s"

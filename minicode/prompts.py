@@ -103,6 +103,17 @@ def _read_context_file(cwd: Path) -> str:
     return ""
 
 
+def assemble_system_prompt(cfg, cwd: Path, custom_agents=None) -> str:
+    """系统提示唯一组装点：主提示 + skills 索引。
+
+    任何需要重建系统提示的命令（/plans /brain /add-dir /output-style /
+    /model …）都必须走这里——直接调 build_system_prompt 会丢掉 skills 段
+    （v0.21 前的 P0-2 缺陷，自生成技能依赖这里作为飞轮入口）。
+    """
+    from .tools.skills import skills_section_text
+    return build_system_prompt(cfg, cwd, custom_agents) + skills_section_text(cwd)
+
+
 def build_system_prompt(cfg, cwd: Path, custom_agents=None, skills_block: str = "") -> str:
     context = _read_context_file(cwd)
     if context:

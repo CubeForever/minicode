@@ -20,7 +20,7 @@ from .checkpoints import CheckpointManager, prune_checkpoint_roots
 from .config import apply_restricted_config, load_config
 from .llm import LLMError, make_provider
 from .mcp import McpManager
-from .prompts import SUBAGENT_PROMPT, REVIEW_PROMPT, build_system_prompt
+from .prompts import SUBAGENT_PROMPT, REVIEW_PROMPT
 from .session import SESSIONS_DIR, Session
 from .tools import build_registry
 from .tools.base import ToolContext, ToolError, ToolRegistry
@@ -305,9 +305,8 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     agent = Agent(provider, session, ui, cfg, ToolRegistry(base_tools),
                   checkpoints=CheckpointManager(ckpt_root))
     agent.ctx.agent_factory = factory
-    from .tools.skills import skills_section_text
-    agent.system_prompt = (build_system_prompt(cfg, cfg.cwd, agents)
-                           + skills_section_text(cfg.cwd))
+    from .prompts import assemble_system_prompt
+    agent.system_prompt = assemble_system_prompt(cfg, cfg.cwd, agents)
     append = getattr(cfg, "append_system_prompt", "")
     if append:
         agent.system_prompt += "\n\n" + append
@@ -742,10 +741,12 @@ def _render_help() -> str:
 
 
 def _rebuild_prompt(agent: Agent) -> None:
-    from .tools.skills import skills_section_text
-    agent.system_prompt = (build_system_prompt(agent.config, agent._prompt_cwd,
-                                               agent._custom_agents)
-                           + skills_section_text(agent._prompt_cwd))
+    from .prompts import assemble_system_prompt
+    agent.system_prompt = assemble_system_prompt(agent.config, agent._prompt_cwd,
+                                                 agent._custom_agents)
+    append = getattr(agent.config, "append_system_prompt", "")
+    if append and append not in agent.system_prompt:
+        agent.system_prompt += "\n\n" + append
 
 
 def _shell_passthrough(agent: Agent, ui: UI, command: str) -> None:
@@ -1197,8 +1198,7 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
             p = _plans.mark_plan(Path.cwd(), int(pick), "done") \
                 if pick.isdigit() else None
             if p:
-                agent.system_prompt = build_system_prompt(
-                    agent.config, agent._prompt_cwd, agent._custom_agents)
+                _rebuild_prompt(agent)
                 ui.info(f"计划 #{pick} 已标记完成。")
             else:
                 ui.error(f"没有 #{pick} 号计划。")
@@ -1444,6 +1444,7 @@ def main(argv=None) -> int:
                 json.dumps(m, ensure_ascii=False, default=str), flush=True)
         try:
             agent.run_turn(prompt)
+            _after_turn(agent)   # 修复：-p 此前跳过回合收尾（token 统计/压缩/hooks 全丢）
         except (LLMError, RuntimeError) as e:
             ui.error(str(e))
             return 1
