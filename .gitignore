@@ -11,3 +11,4 @@ hello.txt
 eval/results/
 eval/baselines/
 .minicode/
+eval/redteam/

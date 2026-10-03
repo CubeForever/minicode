@@ -50,7 +50,17 @@ REDTEAM_PROMPT = """对下面这批代码改动做对抗性评审。只读调查
 
 def build_redteam_prompt(diff_text: str, scope: str = "") -> str:
     scope_line = f"\n## 用户圈定的评审范围\n{scope}\n" if scope else ""
-    return REDTEAM_PROMPT.format(diff=diff_text[:14000], scope=scope_line)
+    # 截断透明化(v0.23.1,审查采纳):静默截断会让红队对"没看到的部分"
+    # 沉默,报告却显得完整——系统性低估发现率,虚高 v0.24 要用的 precision。
+    limit = 14000
+    shown = diff_text[:limit]
+    trunc_note = ""
+    if len(diff_text) > limit:
+        trunc_note = (f"\n> ⚠ 本次 diff 已截断:仅展示前 {limit} 字符"
+                      f"(共 {len(diff_text)} 字符)。未展示部分你**没有评审过**,"
+                      "不要默认它们没有问题——必须在报告末尾单列「未覆盖区域」"
+                      "一节说明此限制,供标注者把该任务的 precision 单独定性。\n")
+    return REDTEAM_PROMPT.format(diff=shown, scope=scope_line) + trunc_note
 
 
 def redteam_dir(cwd) -> Path:

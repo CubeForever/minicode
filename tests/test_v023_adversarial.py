@@ -71,6 +71,18 @@ def test_redteam_prompt_contains_attack_surface_and_diff():
     assert "只看并发" in p
 
 
+def test_redteam_truncated_diff_is_announced_not_silent():
+    """v0.23.1:静默截断会让红队对未评审部分沉默、报告却显得完整,
+    系统性虚高 precision——截断必须写进提示词并强制声明未覆盖区域。"""
+    big = "\n".join(f"diff line {i} xxxxxxxxxxxxxxxxxxxxxxxx" for i in range(700))
+    assert len(big) > 14000
+    p = build_redteam_prompt(big)
+    assert "已截断" in p and "14000" in p and f"共 {len(big)} 字符" in p
+    assert "未覆盖区域" in p
+    small = build_redteam_prompt("tiny diff")
+    assert "已截断" not in small
+
+
 def test_redteam_report_archived_with_labeling_table(tmp_path):
     p = save_report(tmp_path, "## 红队报告\n- [应修] 空指针 (a.py:3)")
     text = p.read_text(encoding="utf-8")
