@@ -66,7 +66,14 @@ def _diff_vs_setup(task: dict, sandbox: Path) -> str:
             chunks.append("\n".join(d))
     for p in sandbox.rglob("*"):
         if p.is_file() and p.relative_to(sandbox).as_posix() not in setup \
-                and "node_modules" not in p.parts and ".git" not in p.parts:
+                and "node_modules" not in p.parts and ".git" not in p.parts \
+                and "__pycache__" not in p.parts:
+            try:
+                data = p.read_bytes()[:8192]
+            except OSError:
+                continue
+            if b"\x00" in data:
+                continue   # 二进制文件(.pyc 等):null 字符会炸掉子进程 argv
             new = p.read_text(encoding="utf-8", errors="replace")[:400]
             chunks.append(f"--- /dev/null\n+++ {p.relative_to(sandbox).as_posix()}\n"
                           + "\n".join("+ " + ln for ln in new.splitlines()[:60]))
