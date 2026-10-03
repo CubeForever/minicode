@@ -116,7 +116,7 @@ def test_mcp_search_skips_loaded_and_exhausts():
     search = McpSearchTool(pool, reg)
     search.run({"query": "tool"}, None)
     first_loaded = list(reg.tools)
-    out2 = search.run({"query": "tool"}, None)
+    search.run({"query": "tool"}, None)
     for name in first_loaded:
         assert name in reg.tools          # 不重复注册
     # 全部加载后 → 无更多
