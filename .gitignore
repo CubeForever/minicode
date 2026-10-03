@@ -10,3 +10,4 @@ build/
 hello.txt
 eval/results/
 eval/baselines/
+.minicode/

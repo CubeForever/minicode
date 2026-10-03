@@ -430,8 +430,12 @@ def _maybe_autoskill(agent: Agent, files_changed: int, errors: int,
         path, created = maybe_generate_skill(
             agent.provider, Path(agent.config.cwd), digest,
             source_hint=Path(agent.config.cwd).name)
-    except Exception:
-        return   # 附加能力，任何失败静默
+    except Exception as e:
+        # 附加能力不能影响主回合，故静默不抛——但 debug 模式留痕，
+        # 否则"为什么我的技能没生成"无从排查（v0.23，审查建议）。
+        if getattr(agent.config, "debug", False) or os.environ.get("MINICODE_DEBUG"):
+            agent.ui.warn(f"[autoskill] 技能提炼失败（不影响主回合）：{e}")
+        return
     if created and path is not None:
         agent.ui.info(f"💡 经验沉淀：新技能 {path.name} 已生成"
                       "（下次相似任务自动可用，/skills 查看）")
@@ -754,7 +758,9 @@ HELP_SECTIONS = [
                   ("/todos", "任务清单进度"),
                   ("/rewind", "回退到任一检查点"),
                   ("/diff", "本会话改动总览"), ("/verify [命令]", "自检门禁：失败自动修复"),
-                  ("/lint [命令]", "编辑后 lint 快速回路：报错当场喂回修复")]),
+                  ("/lint [命令]", "编辑后 lint 快速回路：报错当场喂回修复"),
+                  ("/redteam [范围]", "只读红队评审本会话改动（报告存档+盲标表）"),
+                  ("/spec [子命令]", "spec 驱动：new/show/run/done/to-eval（[auto]/[manual] 分流）")]),
     ("上下文与记忆", [("/brain", "项目大脑（跨会话记忆）"), ("/memory", "项目记忆 MINICODE.md"),
                     ("/context", "上下文占用明细"), ("/cost", "累计 token 用量"),
                     ("/limit [1M]", "上下文长度自定义"), ("/stats", "历史会话统计")]),
@@ -893,7 +899,7 @@ def _resolve_command(line: str, agent: Agent, ui: UI):
         return alias_cmd, arg, True
     known = ["/help", "/clear", "/compact", "/model", "/models", "/probe", "/mode",
              "/undo", "/rewind", "/diff", "/reasoning", "/cost", "/context",
-             "/memory", "/brain", "/verify", "/lint", "/todos", "/agents", "/mcp",
+             "/memory", "/brain", "/verify", "/lint", "/redteam", "/spec", "/todos", "/agents", "/mcp",
              "/add-dir", "/transcript", "/output-style", "/doctor", "/tools",
              "/status", "/resume", "/export", "/init", "/plans", "/stats",
              "/commit", "/pr", "/exit", "/quit", "/q"]
@@ -1296,6 +1302,98 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                 return True
             agent.config.context_limit = n
             ui.info(f"上下文长度已设置为 {_fmt_tokens(n)}（{n:,} tok）")
+    elif name == "/redteam":
+        from .redteam import build_redteam_prompt, save_report
+        if not callable(getattr(agent.ctx, "agent_factory", None)):
+            ui.error("当前上下文没有子代理工厂（子代理内部不可再开红队）。")
+        elif not (agent.checkpoints and agent.checkpoints.entries):
+            ui.warn("本会话没有文件改动——红队评审的对象是改动（diff）。")
+        else:
+            diffs = agent.checkpoints.session_diff()
+            diff_text = "\n\n".join(d for _p, d in diffs)
+            prompt = build_redteam_prompt(diff_text, arg)
+            from .ui import Spinner
+            with Spinner("红队评审（只读，1 个攻击性子代理）"):
+                report = agent.ctx.agent_factory(prompt) or ""
+            path = save_report(prompt_cwd, report)
+            for ln in report.splitlines()[:40]:
+                ui.plain("  " + ln)
+            if len(report.splitlines()) > 40:
+                ui.plain(gray(f"  …（其余 {len(report.splitlines()) - 40} 行见报告）"))
+            ui.info(f"报告已存档 {path} —— 请按表内三列盲标 precision"
+                    "（先自查再对照；\"否\"=误报率信号，见 eval/README）")
+    elif name == "/spec":
+        from .specs import (list_specs, mark_spec, parse_spec, spec_path,
+                            to_eval_task, build_implementation_prompt,
+                            SPEC_DRAFT_PROMPT)
+        verb, _, sid = arg.partition(" ")
+        sid = sid.strip() or verb if verb in ("show", "run", "done", "to-eval") else verb
+        if arg.startswith("new ") or verb == "new":
+            title = arg.partition(" ")[2].strip()
+            if not title:
+                ui.warn("用法：/spec new <一句话需求描述>")
+            else:
+                _run_turn(agent, SPEC_DRAFT_PROMPT + title)
+                created = list_specs(prompt_cwd)
+                ui.info(f"spec 起草完成，共 {len(created)} 份（/spec 查看）。"
+                        "确认后 /spec run <id> 实施。")
+        elif verb in ("show", "run", "done", "to-eval") and sid:
+            p = spec_path(prompt_cwd, sid)
+            if not p.exists():
+                ui.warn(f"spec {sid!r} 不存在（/spec 查看）。")
+            elif verb == "show":
+                ui.plain(p.read_text(encoding="utf-8", errors="replace"))
+            elif verb == "done":
+                mark_spec(prompt_cwd, sid, "done")
+                ui.info(f"spec {sid} 已标记 done。")
+            elif verb == "to-eval":
+                tp, _cp, msg = to_eval_task(prompt_cwd, sid)
+                if tp:
+                    ui.info(f"✅ {msg} → {tp}")
+                else:
+                    ui.warn(msg)
+            else:   # run
+                meta, req, criteria = parse_spec(p)
+                n_auto = sum(1 for tag, _t in criteria if tag == "auto")
+                ui.info(f"实施 spec {sid}（[auto] {n_auto} 条，"
+                        "完成后自动逐条校验）…")
+                status = _run_turn(agent, build_implementation_prompt(
+                    sid, meta.get("title") or sid, req, criteria))
+                if status == "ok":
+                    from .specs import _CMD_RX
+                    fails = 0
+                    for tag, text in criteria:
+                        if tag != "auto":
+                            continue
+                        m = _CMD_RX.search(text)
+                        if not m:
+                            continue
+                        cmd = m.group(1).replace("{python}",
+                                                 f'"{sys.executable}"')
+                        ui.info(f"[auto] 运行 {cmd} …")
+                        proc = subprocess.run(cmd, shell=True, cwd=str(Path.cwd()),
+                                              capture_output=True)
+                        out = ((proc.stdout or b"") + (proc.stderr or b""))\
+                            .decode("utf-8", "replace").strip()
+                        if proc.returncode == 0:
+                            ui.info(f"[auto] 通过 ✔ {text[:60]}")
+                        else:
+                            fails += 1
+                            ui.error(f"[auto] 未通过 ✗ {text[:60]}\n{out[:800]}")
+                    if n_auto and not fails:
+                        ui.info(f"全部 [auto] 验收通过——/spec done {sid} 归档。")
+        else:
+            rows = list_specs(prompt_cwd)
+            if not rows:
+                ui.info("还没有 spec。/spec new <一句话需求> 起草，"
+                        "或让模型直接写 .minicode/specs/<id>.md。")
+            else:
+                for sid, title, st, n_auto, n_manual in rows:
+                    mark = green("●") if st == "draft" else gray("○")
+                    ui.plain(f"  {mark} {sid:<24} {gray('[' + st + ']')} "
+                             f"{title} {gray(f'[auto]{n_auto} [manual]{n_manual}')}")
+            ui.info("子命令：new <描述> / show <id> / run <id> / done <id> / "
+                    "to-eval <id>（仅对存在 [auto] 的 spec 生效）")
     elif name == "/skills":
         from .tools.skills import (_hits, archive_stale_autoskills,
                                    load_skill, skills_catalog)
@@ -1553,7 +1651,7 @@ def main(argv=None) -> int:
                      "/transcript", "/output-style", "/doctor", "/tools", "/status",
                      "/resume", "/export", "/init", "/plans", "/stats", "/commit",
                      "/pr", "/copy", "/limit", "/skills", "/prompt", "/market",
-                     "/hooks", "/lint", "/exit"]
+                     "/hooks", "/lint", "/redteam", "/spec", "/exit"]
     command_names += ["/" + n for n in _custom_commands()]
 
     turn_no = 0
