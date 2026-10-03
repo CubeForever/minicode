@@ -75,6 +75,11 @@ def _parse(path: Path) -> Tuple[str, str, str]:
 
 
 def _hits(cwd) -> Dict[str, dict]:
+    # 遥测键 == 技能目录名（v0.22.1 对齐）。注意：hits 文件按项目 cwd
+    # 隔离——v0.24 若做 git worktree 并行子代理，每个 worktree 是独立
+    # cwd，会各写一份 hits 且归档判定只看当前 worktree 那份。届时必须
+    # 先定 hits 归属（按 git 仓库根归一，或全局按仓库身份聚合），否则
+    # 重度使用的技能会在别的 worktree 视角被判零命中而误归档。
     p = _project_skills_dir(cwd) / HITS_FILE
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -228,6 +233,10 @@ def write_autoskill(cwd, raw: str) -> Tuple[Optional[Path], bool]:
                 break
     target = _project_skills_dir(cwd) / (AUTO_PREFIX + slug)
     if (target / SKILL_FILE).exists():
+        # 首次落盘优先、不反复改写（保守设计）。已知边界：同名但更优的
+        # 提炼永远落不了盘——若 /skills 出现"命中几十次但内容明显滞后"，
+        # 在这里加升级通道：hits>=N 且距上次落盘>30 天 → 生成
+        # auto-<slug>-v2（v0.23+ 依据面板数据再定，勿提前建机制）。
         return target, False   # 已存在：不覆盖，视为沉淀过
     # frontmatter name 必须与目录名一致（auto- 前缀）：catalog 键、
     # load_skill 的目录定位、.hits.json 遥测键、归档判定键四处同源。

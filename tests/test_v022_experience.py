@@ -277,3 +277,30 @@ def test_p_mode_runs_after_turn(tmp_path):
     data = json.loads(r.stdout.decode("utf-8").strip().splitlines()[-1])
     assert data["usage"]["input"] > 0
     assert marker.exists(), "turn_end hook 未随 _after_turn 执行"
+
+
+def test_verify_fix_turns_do_not_reenter_gate(tmp_path, monkeypatch):
+    """v0.22.2 防嵌套回归：自检的修复回合不得重入自检门。
+
+    修复前：_self_verify → 修复 _run_turn → （又改了文件）→ _self_verify →
+    只要每轮还在改文件且自检持续失败就无界递归。修复后门自己在每轮
+    修复后复验，嵌套深度恒为 1。"""
+    import minicode.cli as cli_mod
+
+    calls = []
+    real = cli_mod._self_verify
+    monkeypatch.setattr(cli_mod, "_self_verify",
+                        lambda a, m: (calls.append(m), real(a, m))[1])
+
+    steps = [{"tool_calls": [{"id": f"t{i}", "name": "write_file",
+                              "args": json.dumps({"path": f"f{i}.txt",
+                                                  "content": "x"})}]}
+             for i in range(6)]
+    steps.append({"text": "done"})
+    agent = make_agent(tmp_path, FakeProvider(steps))
+    from minicode.checkpoints import CheckpointManager
+    agent.checkpoints = CheckpointManager(tmp_path / "ckpt")
+    agent.config.verify_command = "exit 1"   # 自检永远失败 → 触发修复循环
+    cli_mod._run_turn(agent, "write files")
+    assert calls[0] is True                              # 最外层触发一次
+    assert True not in calls[1:], "修复回合重入了自检门"   # 深度恒为 1

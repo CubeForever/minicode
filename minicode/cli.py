@@ -370,7 +370,7 @@ def _after_turn(agent: Agent) -> None:
     _hmsg, _hout, _ok = agent._run_hook("turn_end", {"messages": len(s.messages)})
 
 
-def _run_turn(agent: Agent, text: str) -> str:
+def _run_turn(agent: Agent, text: str, _in_verify: bool = False) -> str:
     blocked, _hout, _ok = agent._run_hook("user_prompt_submit", {"prompt": text})
     if blocked:
         agent.ui.warn(f"user_prompt_submit hook 拦截了该提示词：{blocked}")
@@ -397,7 +397,11 @@ def _run_turn(agent: Agent, text: str) -> str:
         files_changed = len({e["path"] for e in agent.checkpoints.entries[n0:]}) \
             if agent.checkpoints else 0
         errors = agent.turn_errors   # verify 的修复回合会重置计数，先取快照
-        _self_verify(agent, mutated)
+        if not _in_verify:
+            # 防嵌套（v0.22.2）：自检的修复回合不再触发自检门——门自己在
+            # 每轮修复后重新跑 verify，否则"自检→修复→又自检→再修复"
+            # 只要每轮还在改文件且自检持续失败就会无界递归。
+            _self_verify(agent, mutated)
         _maybe_autoskill(agent, files_changed, errors)
     return status
 
@@ -460,7 +464,8 @@ def _self_verify(agent: Agent, mutated: bool) -> None:
         ui.warn(f"自检未通过（第 {attempt}/2 轮），自动修复中…")
         _run_turn(agent, "The self-verify gate failed. Fix the code so this command "
                          "passes, then confirm:\n"
-                         f"command: {cmd}\noutput (tail):\n{out[-4000:]}")
+                         f"command: {cmd}\noutput (tail):\n{out[-4000:]}",
+                  _in_verify=True)   # 修复回合不再触发自检门（门自己复验）
         with Spinner("Self-verify"):
             ok, out = run_verify()
         agent.last_verify_ok = ok
