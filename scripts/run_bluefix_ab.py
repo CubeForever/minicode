@@ -13,8 +13,10 @@
     python scripts/run_bluefix_ab.py --task feature-implement-spec
     python scripts/run_bluefix_ab.py --task feature-implement-spec --keep-sandbox
 
-流程(每模式):重建沙箱 → 无头求解 → 取该任务最新红队报告为蓝队输入 →
-无头蓝队(yolo,带写权限)→ 复跑 eval 校验 → 修复后 diff + 报告落盘
+流程:重建沙箱 → 无头求解 → **红队对本轮求解现场重跑**(v0.24.1 对象
+绑定——旧报告评审的是另一次求解的产物,B 组的"diff 含 float() 但文件
+没有"即此)→ 两种蓝队输入各跑一次(A=仅发现 / B=全量)→ 独立自验门
+(重跑蓝队声明的自验命令,自述不算数)→ 修复后 diff 落盘
 eval/bluefix/<task>-<mode>-<ts>.md。
 """
 from __future__ import annotations
@@ -34,17 +36,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 import run_eval  # noqa: E402
-from minicode.blueteam import blue_input, build_blueteam_prompt  # noqa: E402
+from minicode.blueteam import (blue_input,  # noqa: E402
+                               build_blueteam_prompt)
+from minicode.redteam import build_redteam_prompt  # noqa: E402
 
 PILOT_TASK = "feature-implement-spec"
 MODES = ("findings", "full")
-
-
-def _redteam_report(cwd: Path, tid: str) -> Path:
-    cands = sorted((Path(cwd) / "eval" / "redteam").glob(f"{tid}-*.md"))
-    if not cands:
-        raise SystemExit(f"没有 {tid} 的红队报告——先跑 scripts/run_redteam.py")
-    return cands[-1]
 
 
 def _base_env() -> dict:
@@ -82,14 +79,13 @@ def main() -> int:
         print(f"任务 {args.task} 不存在", file=sys.stderr)
         return 1
     task["_checks_dir"] = Path(args.tasks).parent / "checks"
-    red_md_path = _redteam_report(ROOT, args.task)
-    report_md = red_md_path.read_text(encoding="utf-8")
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
 
-    print(f"A/B 对照实验 — {args.task}(红队输入:{red_md_path.name})\n")
+    print(f"A/B 对照实验 — {args.task}\n")
     results = {}
+    red_report = None   # 每次求解后新跑红队——评审对象与被校验对象绑定
     for mode in MODES:
         sandbox = Path(tempfile.mkdtemp(
             prefix=f"minicode-bluefix-{args.task}-{mode}-"))
@@ -103,6 +99,25 @@ def main() -> int:
                 env=_base_env())
             pre_diff = _diff_snapshot(sandbox,
                                       (task.get("setup") or {}).get("files"))
+            # 红队对本轮求解的 diff 现场重跑(v0.24.1,审查②:旧报告评审的
+            # 是另一次求解的产物——B 组的"diff 含 float() 但文件没有"即此)
+            if red_report is None:
+                rprompt = build_redteam_prompt(pre_diff,
+                                               f"eval 任务 {args.task} 的解法")
+                rproc = subprocess.run(
+                    [sys.executable, "-m", "minicode", "-p", rprompt,
+                     "--yolo", "--no-save", "--output-format", "json"],
+                    cwd=str(sandbox), capture_output=True,
+                    timeout=args.timeout, env=_base_env())
+                red_out, _rfail = _extract(
+                    rproc.stdout.decode("utf-8", "replace"),
+                    rproc.stderr.decode("utf-8", "replace"))
+                red_report = outdir / f"redteam-fresh-{stamp}.md"
+                red_report.write_text(
+                    f"# 红队报告(实验内新跑,绑定本轮求解)— {args.task}\n\n"
+                    + red_out, encoding="utf-8")
+                print(f"    红队已对本轮求解重跑 → {red_report.name}")
+            report_md = red_report.read_text(encoding="utf-8")
             prompt = build_blueteam_prompt(blue_input(report_md, mode), mode)
             fail = ""
             try:
@@ -111,9 +126,9 @@ def main() -> int:
                      "--yolo", "--no-save", "--output-format", "json"],
                     cwd=str(sandbox), capture_output=True,
                     timeout=args.timeout, env=_base_env())
-                blue_out, fail = run_eval.__dict__.get("_noop") or \
-                    _extract(proc.stdout.decode("utf-8", "replace"),
-                             proc.stderr.decode("utf-8", "replace"))
+                blue_out, fail = _extract(
+                    proc.stdout.decode("utf-8", "replace"),
+                    proc.stderr.decode("utf-8", "replace"))
             except subprocess.TimeoutExpired:
                 fail = "timeout"
                 blue_out = f"(蓝队调用失败:超时 {args.timeout}s)"
@@ -125,13 +140,18 @@ def main() -> int:
                 shell=True, cwd=str(sandbox), capture_output=True,
                 timeout=120, env=_base_env())
             check_ok = cproc.returncode == 0
+            # 独立自验门:重跑蓝队声明的自验命令——自述不算数(v0.24.1)
+            from minicode.blueteam import (independent_verify,
+                                           render_independent_verify)
+            iv = independent_verify(blue_out, sandbox)
             body = (f"# 蓝队 A/B — {args.task} · mode={mode}\n\n"
                     f"- 时间:{time.strftime('%Y-%m-%d %H:%M')}\n"
-                    f"- 红队输入:{red_md_path.name}({mode} 模式)\n"
+                    f"- 红队输入:{red_report.name}(实验内对本轮求解新跑)\n"
                     f"- 蓝队失败类别:{fail or '无'}\n"
                     f"- 修复后校验:{'通过' if check_ok else '未通过'}\n\n"
                     f"## 修复前解法 diff\n\n```diff\n{pre_diff}\n```\n\n"
                     f"## 蓝队输出\n\n{blue_out}\n\n"
+                    + render_independent_verify(iv) + "\n\n"
                     f"## 修复后总 diff(蓝队改动 = 本节 − 上一节)\n\n"
                     f"```diff\n{post_diff}\n```\n")
             out = outdir / f"{args.task}-{mode}-{stamp}.md"

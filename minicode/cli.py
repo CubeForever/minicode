@@ -1399,9 +1399,11 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
         from .blueteam import (blue_input, build_blueteam_prompt,
                                findings_summary, save_fix_report)
         from .redteam import redteam_dir
-        mode = arg.strip() or "full"
+        # 输入模式定稿 A(审查判定):只读发现列表——覆盖面 ≥ full,
+        # 成本更低,且 full 组在 A/B 实测中引入了事实错误。
+        mode = arg.strip() or "findings"
         if mode not in ("findings", "full"):
-            mode = "full"
+            mode = "findings"
         reports = sorted(redteam_dir(Path.cwd()).glob("*.md"))
         if not reports:
             ui.warn("没有红队报告（/redteam 先行）。")

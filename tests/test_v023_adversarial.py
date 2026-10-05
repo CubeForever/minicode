@@ -378,3 +378,61 @@ def test_bluefix_without_reports_warns(tmp_path, monkeypatch):
     from minicode import cli as cli_mod
     cli_mod._command("/bluefix", agent, ui, tmp_path)
     assert any("没有红队报告" in w for w in ui.warns)
+
+
+# ---------- v0.24.1:契约驱动 + 独立自验门 ----------
+
+def test_blueteam_prompt_contract_driven():
+    from minicode.blueteam import build_blueteam_prompt
+    p = build_blueteam_prompt("INPUT", "findings")
+    for kw in ("契约驱动", "已兑现/未兑现/无法验证", "自验命令必须用反引号",
+               "独立重跑"):
+        assert kw in p
+
+
+def test_verify_commands_extraction():
+    from minicode.blueteam import verify_commands_from_output
+    out = ('修复完成。\n- 自验: `python -m pytest -q`\n'
+           '- 自验: `python util_check.py`\n不是自验的: `ls`\n')
+    assert verify_commands_from_output(out) == ["python -m pytest -q",
+                                                "python util_check.py"]
+    assert verify_commands_from_output("无自验") == []
+
+
+def test_independent_verify_runs_commands(tmp_path):
+    from minicode.blueteam import independent_verify, render_independent_verify
+    ok_cmd = f'"{sys.executable}" -c "print(\'fine\')"'
+    bad_cmd = f'"{sys.executable}" -c "print(\'boom\');raise SystemExit(3)"'
+    res = independent_verify(f"- 自验: `{ok_cmd}`\n- 自验: `{bad_cmd}`",
+                             tmp_path)
+    assert len(res) == 2
+    assert res[0][1] is True and res[1][1] is False
+    rendered = render_independent_verify(res)
+    assert "[PASS]" in rendered and "[FAIL]" in rendered
+    assert "自述与实测不符" in rendered
+    # 蓝队未声明自验命令 → 按协议视为自验缺失(数据不可信)
+    assert "自验缺失" in render_independent_verify([])
+
+
+def test_bluefix_default_mode_is_findings(tmp_path, monkeypatch):
+    """A/B 实验结论落地:输入模式定稿 A(只读发现列表)。"""
+    monkeypatch.chdir(tmp_path)
+    agent = make_agent(tmp_path, FakeProvider([]))
+
+    class FakeSubAgent:
+        def __init__(self, provider, session, ui, cfg, registry, **kw):
+            self.session = session
+
+        def run_turn(self, prompt):
+            assert "对照组 A" in prompt      # 默认 findings
+            assert "已证伪的可疑点" not in prompt
+            self.session.add({"role": "assistant", "content": "done"})
+
+    monkeypatch.setattr("minicode.cli.Agent", FakeSubAgent)
+    (tmp_path / ".minicode" / "redteam").mkdir(parents=True)
+    (tmp_path / ".minicode" / "redteam" / "r1.md").write_text(
+        REPORT_MD.replace("t1", "echo"), encoding="utf-8")
+    ui = CaptureUI()
+    agent.ui = ui
+    from minicode import cli as cli_mod
+    cli_mod._command("/bluefix", agent, ui, tmp_path)   # 不带模式参数
