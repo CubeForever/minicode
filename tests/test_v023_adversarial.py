@@ -8,6 +8,7 @@
 - 自检修复回合不做技能提炼;提炼失败在 debug 模式留痕。
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -234,3 +235,60 @@ def test_redteam_report_carries_diff_before_findings(tmp_path):
     big = "x" * 15000
     t2 = run_redteam.assemble_report("t2", True, big, "r", tmp_path)
     assert "红队实际收到前 14000 / 15000" in t2    # 截断透明(报告侧)
+
+
+# ---------- v0.23.4:红队调用失败响亮化 / harness 卫生 / env 一致 ----------
+
+def _load_run_redteam():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        import run_redteam
+    finally:
+        sys.path.pop(0)
+        sys.path.insert(0, str(ROOT / "scripts"))   # 后续断言仍可复用
+    return run_redteam
+
+
+def test_extract_report_success():
+    rr = _load_run_redteam()
+    line = json.dumps({"result": "## 红队报告\n- [应修] x", "usage": {}})
+    report, fail = rr._extract_report('noise before\n' + line + '\n', "")
+    assert fail == "" and "未判空" not in report and "应修" in report
+
+
+def test_extract_report_failure_modes_are_loud():
+    rr = _load_run_redteam()
+    # 无 JSON 行 → 失败类别 + stdout/stderr 尾部落盘(此前空报告+空 stderr 静默)
+    report, fail = rr._extract_report("some error text\n", "Traceback …")
+    assert fail == "no-json"
+    assert "stdout 尾部" in report and "some error text" in report
+    assert "Traceback" in report
+    # JSON 但 result 为空 → 显式 empty-result,不是静默成功
+    line = json.dumps({"result": "", "usage": {}})
+    report2, fail2 = rr._extract_report(line, "")
+    assert fail2 == "empty-result" and "红队无输出" in report2
+
+
+def test_diff_vs_setup_skips_harness_artifacts(tmp_path):
+    rr = _load_run_redteam()
+    task = {"setup": {"files": {"app.py": "print(1)\n"}}}
+    (tmp_path / "app.py").write_text("print(2)\n", encoding="utf-8")
+    cache = tmp_path / ".pytest_cache" / "v" / "cache"
+    cache.mkdir(parents=True)
+    (cache / "lastfailed").write_text("x", encoding="utf-8")
+    brain = tmp_path / ".minicode"
+    brain.mkdir()
+    (brain / "BRAIN.md").write_text("泄露本机路径的内容", encoding="utf-8")
+    (tmp_path / "real_new.py").write_text("print(3)\n", encoding="utf-8")
+    diff = rr._diff_vs_setup(task, tmp_path)
+    assert "app.py" in diff and "real_new.py" in diff   # 真实解法保留
+    assert "pytest_cache" not in diff and "BRAIN.md" not in diff  # 副产物滤除
+
+
+def test_base_env_prepends_interpreter_dir():
+    rr = _load_run_redteam()
+    env = rr._base_env()
+    exe_dir = str(Path(sys.executable).parent)
+    assert env["PATH"].startswith(exe_dir + os.pathsep)
+    assert env["PYTHONPATH"] == str(ROOT)
+    assert env["PYTHONUTF8"] == "1"

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.23.4 (2026-10-03)
+
+红队 harness 三处修复（第二批标注发现的全部问题,当日收口）：
+
+**① 红队调用失败响亮化（P0：implement-spec 报告为空的根因类）**
+- 旧解析 `splitlines()[-1]` + 宽 except：stdout 无 JSON 行时静默产出"(红队调用失败: )"空报告,批次仍标记成功——流程静默失败比崩溃更危险（与 v0.23.2 盲标协议同类）
+- `_extract_report` 从后向前扫 JSON 结果行,失败分类 no-json / empty-result,失败时 stdout 与 stderr 尾部**全文落盘**进报告;控制台标 ✗ 并注明"报告仅作排查用"
+- `TimeoutExpired` 单独分支（旧代码未接,红队超时会崩整批）,报告写明超时与调参建议
+
+**② eval harness 卫生**：`_diff_vs_setup` 跳过 `.pytest_cache/` 与 `.minicode/`（BRAIN.md 污染评审对象、消耗红队存疑额——第二批两个任务中招）
+
+**③ env 一致性**：求解与红队统一走 `_base_env()`,并把解释器目录前置进 PATH——沙箱内 agent 的 bash 中 python 由此可解析,消掉"agent 自述无解释器可用"一类失实环境记录（implement-spec 的 BRAIN.md 曾写"No Python interpreter",同批红队却实测 4 passed）
+
+测试 389 项（+4:提取三态/失败响亮/副产物滤除/PATH 前置）。
+
 ## 0.23.3 (2026-10-03)
 
 红队第一批标注基线入档 + 发散-收敛提示词（v0.24 方向调整的落地）：

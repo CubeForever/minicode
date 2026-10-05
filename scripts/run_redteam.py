@@ -45,17 +45,56 @@ BATCH2_TASKS = ["bugfix-json-syntax", "feature-write-tests",
                 "feature-implement-spec"]
 
 
+def _base_env() -> dict:
+    """求解与红队共用的统一 env(审查③:两处不一致会让 agent 的环境
+    自述不可信)。把解释器目录前置进 PATH——沙箱内 agent 的 bash 里
+    python 由此可解析,消掉"无解释器可用"一类失实环境记录。"""
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)}
+    exe_dir = str(Path(sys.executable).parent)
+    env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _solve(task: dict, timeout: int, sandbox: Path) -> bool:
-    env = {**{k: v for k, v in os.environ.items()},
-           "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)}
-    subprocess.run(
-        [sys.executable, "-m", "minicode", "-p", task["instruction"],
-         "--yolo", "--no-save", "--output-format", "json"],
-        cwd=str(sandbox), capture_output=True, timeout=timeout, env=env)
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "minicode", "-p", task["instruction"],
+             "--yolo", "--no-save", "--output-format", "json"],
+            cwd=str(sandbox), capture_output=True, timeout=timeout,
+            env=_base_env())
+    except subprocess.TimeoutExpired:
+        print(f"    求解超时({timeout}s)——校验按现状执行", file=sys.stderr)
     cproc = subprocess.run(
         run_eval._check_command(task, sandbox, Path(task["_checks_dir"])),
-        shell=True, cwd=str(sandbox), capture_output=True, timeout=120, env=env)
+        shell=True, cwd=str(sandbox), capture_output=True, timeout=120,
+        env=_base_env())
     return cproc.returncode == 0
+
+
+def _extract_report(stdout_text: str, stderr_text: str) -> tuple:
+    """从 -p --output-format json 的输出提取红队报告。
+
+    失败必须响亮(v0.23.4):返回 (报告文本, 失败类别)。类别 "" = 成功;
+    其余取值写入报告与控制台,禁止产出"看起来成功"的空报告。stderr 全文
+    尾部随失败落盘——空报告 + 空 stderr 的静默组合正是本类缺陷的根源。
+    """
+    for line in reversed(stdout_text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "result" not in d:
+            continue
+        result = d.get("result")
+        if result:
+            return result, ""
+        return "(红队无输出——模型未返回正文)", "empty-result"
+    return (f"(红队调用失败——stdout 中没有 JSON 结果行。"
+            f"stdout 尾部: {stdout_text[-500:]!r} | stderr 尾部: {stderr_text[-500:]!r})",
+            "no-json")
 
 
 def _diff_vs_setup(task: dict, sandbox: Path) -> str:
@@ -73,7 +112,11 @@ def _diff_vs_setup(task: dict, sandbox: Path) -> str:
     for p in sandbox.rglob("*"):
         if p.is_file() and p.relative_to(sandbox).as_posix() not in setup \
                 and "node_modules" not in p.parts and ".git" not in p.parts \
-                and "__pycache__" not in p.parts:
+                and "__pycache__" not in p.parts \
+                and ".pytest_cache" not in p.parts \
+                and ".minicode" not in p.parts:
+            # .pytest_cache / .minicode(BRAIN)是 harness 副产物,不是解法——
+            # 留在 diff 里会污染评审对象,红队还得花存疑额处理它(v0.23.4)
             try:
                 data = p.read_bytes()[:8192]
             except OSError:
@@ -149,24 +192,28 @@ def main() -> int:
             run_eval._setup_sandbox(sandbox, task)
             ok = _solve(task, args.timeout, sandbox)
             diff = _diff_vs_setup(task, sandbox)
-            env = {**{k: v for k, v in os.environ.items()},
-                   "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)}
             prompt = build_redteam_prompt(diff, f"eval 任务 {tid} 的解法")
-            proc = subprocess.run(
-                [sys.executable, "-m", "minicode", "-p", prompt,
-                 "--yolo", "--no-save", "--output-format", "json"],
-                cwd=str(sandbox), capture_output=True, timeout=args.timeout,
-                env=env)
+            fail = ""
             try:
-                report = json.loads(
-                    proc.stdout.decode("utf-8", "replace")
-                    .strip().splitlines()[-1]).get("result") or "(红队无输出)"
-            except (json.JSONDecodeError, IndexError, KeyError):
-                report = f"(红队调用失败: {proc.stderr.decode('utf-8', 'replace')[:300]})"
+                proc = subprocess.run(
+                    [sys.executable, "-m", "minicode", "-p", prompt,
+                     "--yolo", "--no-save", "--output-format", "json"],
+                    cwd=str(sandbox), capture_output=True, timeout=args.timeout,
+                    env=_base_env())
+                report, fail = _extract_report(
+                    proc.stdout.decode("utf-8", "replace"),
+                    proc.stderr.decode("utf-8", "replace"))
+            except subprocess.TimeoutExpired:
+                fail = "timeout"
+                report = (f"(红队调用失败:超时 {args.timeout}s —— 发散-收敛"
+                          "提示词更长,必要时调大 --timeout)")
             text = assemble_report(tid, ok, diff, report, sandbox)
             out = outdir / f"{tid}-{time.strftime('%Y%m%d-%H%M%S')}.md"
             out.write_text(text, encoding="utf-8")
-            print(f"[✓] {tid} → {out}")
+            # 失败必须响亮(v0.23.4):报告照常落盘供排查,但控制台标 ✗
+            mark = "✗" if fail else "✓"
+            note = f" —— 红队失败({fail}),报告仅作排查用" if fail else ""
+            print(f"[{mark}] {tid} → {out}{note}")
         finally:
             if args.keep_sandbox:
                 print(f"    沙箱保留:{sandbox}")
