@@ -41,7 +41,7 @@ MODES = ("findings", "full")
 
 
 def _redteam_report(cwd: Path, tid: str) -> Path:
-    cands = sorted(Path(cwd).glob("eval/redteam") / f"{tid}-*.md")
+    cands = sorted((Path(cwd) / "eval" / "redteam").glob(f"{tid}-*.md"))
     if not cands:
         raise SystemExit(f"没有 {tid} 的红队报告——先跑 scripts/run_redteam.py")
     return cands[-1]
