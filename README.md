@@ -2,7 +2,7 @@
 
 终端里的编码智能体，能力对标 Claude Code / Codex CLI，并有三项独创设计。**零第三方依赖**（纯 Python 标准库，≥ 3.9），适配所有 OpenAI 兼容 API（GLM / DeepSeek / Kimi / Qwen / OpenAI / Ollama / 各类中转站）与 Anthropic API。
 
-当前状态：**v0.23.4 · 22 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 389 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
+当前状态：**v0.24.0 · 22 个内置工具 · 并行多子智能体 · 终端 REPL + 浏览器 Web 界面（会话/工作区/模型配置/扩展全管理） · 394 项自动化测试 · CI 矩阵 9/9 全绿（ubuntu/macos/windows × Python 3.9/3.10/3.12） · MIT 开源**
 
 ## 它能做什么
 
@@ -25,13 +25,14 @@
 - **MCP 渐进披露（对标 Anthropic Tool Search）**：MCP 工具/资源超过 15 个时不再把全部 schema 塞进上下文，模型用 mcp_search 按关键词检索、命中即动态加载——大 MCP 服务器的 token 开销从 O(全部) 降为 O(用到)
 - **对抗性红队评审（v0.23，只读）**：`/redteam` 一个攻击性只读子代理对本会话改动出报告——六类攻击面（边界/错误路径/回归/资源并发/注入/平台差异）逐项过，严重度分级，报告存档 `.minicode/redteam/` 并自带**人工盲标三列表**；precision 标注工作流（`scripts/run_redteam.py`）产出误报率数据，决定 v0.24 蓝队循环是否值得默认开启
 - **spec 驱动模式（v0.23）**：`/spec new` 起草需求契约（验收标准第一天就分 `[auto]` 机器可判定 / `[manual]` 人工过），`/spec run` 实施后**自动逐条运行 [auto] 校验**，`/spec to-eval` 一键转化为 eval 回归任务——转化只对存在 `[auto]` 的 spec 生效（入口判定，预防而非事后过滤）；规格、实施、度量三者闭环
+- **蓝队修复循环（v0.24）**：`/bluefix [findings|full]` 一个**写权限**子代理按红队报告修码并自验——但**不是照单修复**：提示词三条硬要求（先核对红队依据是否成立、举一反三处理同类问题的其他实例、修复后自验），并强制输出「红队遗漏的同类问题」；`scripts/run_bluefix_ab.py` 提供 A/B 对照实验（对照组 A 仅发现列表 vs 实验组 B 全量报告含证伪过程），用人工标注发现的漏项判定蓝队该读什么——precision 数据（6 任务 31 条主张 0 误报）支撑的 go 决策
 - **上下文经济学**：分层压缩（最近 4 个回合逐字保留 thinking 与工具调用配对，更早的进摘要 + 操作骨架，对标 Claude Code compaction）、Anthropic 对话消息递增缓存断点（长会话成本大幅下降）、真实 usage 持续校准 token 估算（中文会话不再数倍偏差）
 - **编辑可靠性三件套**：edit_file 多通道弹性匹配（尾随空格/缩进漂移自动对齐、0.9+ 相似度模糊匹配带相似度与行号报告、line= 行号定位消歧，对标 Aider 多通道匹配）、自动模式下编辑落盘即渲染紧凑 diff（终端与 Web 均着色）、编辑后 lint 快速回路（报错当场喂回模型自修，配置 lint_command 或自动探测 ruff/eslint）
 - **eval 回路**：13 个真实任务（修 bug / 加特性 / 重构 / 写测试）无头运行 + 可执行校验判分（校验脚本在沙箱外防作弊），统计成功率/时长/token；`python scripts/run_eval.py` 本地可跑，夜间 CI 自动度量防回归
 
 ## 优势
 
-- **零依赖、全部可读**：核心约 11600 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
+- **零依赖、全部可读**：核心约 11800 行纯标准库代码，没有黑盒。想加工具是 100 行的事，想改任何行为都有据可查
 - **不锁定模型**：一个环境变量切换 GLM / DeepSeek / Claude / 本地 Ollama；兼容层在真实中转站联调中打磨，新端点的怪癖大多自动消化
 - **安全边界内建**：敏感路径强制确认（yolo 也不放行）、SSRF 封禁、第三方插件/钩子/项目受限配置首次信任确认（内容变更后重新询问）、危险命令告警
 - **三项独创**（Claude Code / Codex 均无）：项目大脑（Brain）、自检回路（Verify Gate）、圆桌模式（Panel）
@@ -185,7 +186,7 @@ minicode --install ./my-pack --user                           # 装到用户级
 
 ### 斜杠命令
 
-`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/lint` `/redteam` `/spec` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/hooks` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/review` `/copy` `/exit`
+`/help` `/clear` `/mode` `/undo` `/rewind` `/diff` `/compact` `/verify` `/lint` `/redteam` `/spec` `/bluefix` `/brain` `/memory` `/limit` `/context` `/cost` `/stats` `/model` `/models` `/probe` `/reasoning` `/tools` `/status` `/doctor` `/agents` `/skills` `/mcp` `/prompt` `/market` `/hooks` `/add-dir` `/plans` `/todos` `/transcript` `/output-style` `/resume` `/export` `/init` `/commit` `/pr` `/review` `/copy` `/exit`
 
 ### 自定义扩展
 
@@ -214,6 +215,7 @@ minicode/
 ├── checkpoints.py  文件检查点（undo / rewind）
 ├── guard.py        敏感路径门禁
 ├── redteam.py      只读红队评审（报告存档 + 盲标表）
+├── blueteam.py     蓝队修复（再推理要求 + A/B 输入模式）
 ├── specs.py        spec 驱动（[auto]/[manual] 验收分流）
 ├── lint.py         编辑后 lint 快速回路（配置 / ruff / eslint 自动探测）
 ├── prompts.py      系统提示词（注入防御 / Git 护栏）
@@ -235,7 +237,7 @@ minicode/
 ## 测试
 
 ```bash
-python -m pytest tests -q    # 389 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
+python -m pytest tests -q    # 394 项，覆盖协议解析/工具/安全/全功能链路/Web 界面
 ```
 
 ## 安全与信任边界（使用前必读）

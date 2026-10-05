@@ -760,7 +760,8 @@ HELP_SECTIONS = [
                   ("/diff", "本会话改动总览"), ("/verify [命令]", "自检门禁：失败自动修复"),
                   ("/lint [命令]", "编辑后 lint 快速回路：报错当场喂回修复"),
                   ("/redteam [范围]", "只读红队评审本会话改动（报告存档+盲标表）"),
-                  ("/spec [子命令]", "spec 驱动：new/show/run/done/to-eval（[auto]/[manual] 分流）")]),
+                  ("/spec [子命令]", "spec 驱动：new/show/run/done/to-eval（[auto]/[manual] 分流）"),
+                  ("/bluefix [findings|full]", "蓝队修复：按红队报告改码+自验（默认 full 全量输入）")]),
     ("上下文与记忆", [("/brain", "项目大脑（跨会话记忆）"), ("/memory", "项目记忆 MINICODE.md"),
                     ("/context", "上下文占用明细"), ("/cost", "累计 token 用量"),
                     ("/limit [1M]", "上下文长度自定义"), ("/stats", "历史会话统计")]),
@@ -899,7 +900,7 @@ def _resolve_command(line: str, agent: Agent, ui: UI):
         return alias_cmd, arg, True
     known = ["/help", "/clear", "/compact", "/model", "/models", "/probe", "/mode",
              "/undo", "/rewind", "/diff", "/reasoning", "/cost", "/context",
-             "/memory", "/brain", "/verify", "/lint", "/redteam", "/spec", "/todos", "/agents", "/mcp",
+             "/memory", "/brain", "/verify", "/lint", "/redteam", "/spec", "/bluefix", "/todos", "/agents", "/mcp",
              "/add-dir", "/transcript", "/output-style", "/doctor", "/tools",
              "/status", "/resume", "/export", "/init", "/plans", "/stats",
              "/commit", "/pr", "/exit", "/quit", "/q"]
@@ -1394,6 +1395,51 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                              f"{title} {gray(f'[auto]{n_auto} [manual]{n_manual}')}")
             ui.info("子命令：new <描述> / show <id> / run <id> / done <id> / "
                     "to-eval <id>（仅对存在 [auto] 的 spec 生效）")
+    elif name == "/bluefix":
+        from .blueteam import (blue_input, build_blueteam_prompt,
+                               findings_summary, save_fix_report)
+        from .redteam import redteam_dir
+        mode = arg.strip() or "full"
+        if mode not in ("findings", "full"):
+            mode = "full"
+        reports = sorted(redteam_dir(Path.cwd()).glob("*.md"))
+        if not reports:
+            ui.warn("没有红队报告（/redteam 先行）。")
+        else:
+            latest = reports[-1]
+            report_md = latest.read_text(encoding="utf-8", errors="replace")
+            summary = findings_summary(report_md)
+            if summary == "无确认发现":
+                ui.info("最新红队报告无确认发现，无需蓝队。")
+            else:
+                ui.info(f"蓝队输入：mode={mode}（{latest.name}，{summary}）")
+                prompt = build_blueteam_prompt(
+                    blue_input(report_md, mode), mode)
+                # 写权限子代理（红队只读，蓝队必须能改）——独立
+                # ShellState/Session/Checkpoint；sub.run_turn() 直跑，
+                # 不触发自检门/经验引擎（v0.22.2 实证的边界）。
+                from .checkpoints import CheckpointManager as _CM
+                sub_ui = SubUI(ui)
+                sub_session = Session()
+                sub_shell = ShellState(agent.config.cwd,
+                                       detect_shell(agent.config.shell))
+                sub = Agent(agent.provider, sub_session, sub_ui, agent.config,
+                            build_registry(sub_shell), max_iterations=25,
+                            checkpoints=_CM(Path.home() / ".minicode"
+                                            / "checkpoints" / time.strftime(
+                                                "%Y%m%d-%H%M%S") / "bluefix"))
+                sub.system_prompt = ("You are the blue team. Fix confirmed "
+                                     "issues, re-reason from evidence, "
+                                     "self-verify after fixing.")
+                sub.run_turn(prompt)
+                result = sub_session.messages[-1].get("content") or ""
+                out = save_fix_report(
+                    Path.cwd(),
+                    f"# 蓝队修复报告 — mode={mode}\n\n"
+                    f"输入：{latest.name}\n\n"
+                    + (result or "(蓝队无输出)"))
+                ui.info(f"蓝队完成，报告存档 {out}"
+                        "（/diff 查看改动，/verify 可复验）")
     elif name == "/skills":
         from .tools.skills import (_hits, archive_stale_autoskills,
                                    load_skill, skills_catalog)
@@ -1651,7 +1697,7 @@ def main(argv=None) -> int:
                      "/transcript", "/output-style", "/doctor", "/tools", "/status",
                      "/resume", "/export", "/init", "/plans", "/stats", "/commit",
                      "/pr", "/copy", "/limit", "/skills", "/prompt", "/market",
-                     "/hooks", "/lint", "/redteam", "/spec", "/exit"]
+                     "/hooks", "/lint", "/redteam", "/spec", "/bluefix", "/exit"]
     command_names += ["/" + n for n in _custom_commands()]
 
     turn_no = 0

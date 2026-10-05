@@ -292,3 +292,89 @@ def test_base_env_prepends_interpreter_dir():
     assert env["PATH"].startswith(exe_dir + os.pathsep)
     assert env["PYTHONPATH"] == str(ROOT)
     assert env["PYTHONUTF8"] == "1"
+
+
+# ---------- v0.24:蓝队 A/B 对照 ----------
+
+REPORT_MD = """# 红队 precision 标注 — t1
+
+## 红队报告
+### 发现
+- [应修] 字面量 --upper 被吞 (echo.py:4)
+### 已证伪的可疑点
+- [证伪] 空输入崩溃 — 实测打印空行不崩
+### 存疑(不确定是否真实)
+- [存疑] 编码问题
+
+## 人工标注(precision)
+"""
+
+
+def test_extract_sections_and_modes():
+    from minicode.blueteam import blue_input, extract_sections
+    secs = extract_sections(REPORT_MD)
+    assert any(k.startswith("发现") for k in secs)
+    assert any("证伪" in k for k in secs)
+    a = blue_input(REPORT_MD, "findings")
+    b = blue_input(REPORT_MD, "full")
+    assert "被吞" in a and "证伪" not in a          # 对照组 A:看不到证伪过程
+    assert "被吞" in b and "证伪" in b              # 实验组 B:全量
+    assert "人工标注" not in b                      # 标注表不给蓝队
+
+
+def test_blueteam_prompt_hard_requirements():
+    from minicode.blueteam import build_blueteam_prompt
+    p = build_blueteam_prompt("INPUT", "full")
+    for kw in ("先核对再修", "举一反三", "同一类问题的其他实例", "红队遗漏",
+               "实验组 B"):
+        assert kw in p
+    pa = build_blueteam_prompt("INPUT", "findings")
+    assert "对照组 A" in pa
+
+
+def test_findings_summary_grades():
+    from minicode.blueteam import findings_summary
+    md = "## 红队报告\n### 发现\n- [应修] a\n- [可选] b\n- [可选] c\n"
+    assert findings_summary(md) == "应修 1 条、可选 2 条"
+    assert findings_summary("## 红队报告\n### 发现\n(无)") == "无确认发现"
+
+
+def test_bluefix_command_wiring(tmp_path, monkeypatch):
+    """写权限子代理路径:registry 必须含写工具(蓝队与只读红队的本质区别)。"""
+    monkeypatch.chdir(tmp_path)
+    agent = make_agent(tmp_path, FakeProvider([]))
+    captured = {}
+
+    class FakeSubAgent:
+        def __init__(self, provider, session, ui, cfg, registry, **kw):
+            captured["registry"] = registry
+            captured["session"] = session
+
+        def run_turn(self, prompt):
+            captured["prompt"] = prompt
+            captured["session"].add({"role": "assistant",
+                                     "content": "FIXED"})
+
+    monkeypatch.setattr("minicode.cli.Agent", FakeSubAgent)
+    (tmp_path / ".minicode" / "redteam").mkdir(parents=True)
+    (tmp_path / ".minicode" / "redteam" / "r1.md").write_text(
+        REPORT_MD.replace("t1", "echo"), encoding="utf-8")
+    ui = CaptureUI()
+    agent.ui = ui
+    from minicode import cli as cli_mod
+    cli_mod._command("/bluefix full", agent, ui, tmp_path)
+    assert "write_file" in captured["registry"].tools   # 写权限
+    assert "findings" not in captured["prompt"][:200]   # full 模式
+    from minicode.blueteam import blueteam_dir
+    reports = list(blueteam_dir(tmp_path).glob("*.md"))
+    assert reports and "FIXED" in reports[0].read_text(encoding="utf-8")
+
+
+def test_bluefix_without_reports_warns(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent = make_agent(tmp_path, FakeProvider([]))
+    ui = CaptureUI()
+    agent.ui = ui
+    from minicode import cli as cli_mod
+    cli_mod._command("/bluefix", agent, ui, tmp_path)
+    assert any("没有红队报告" in w for w in ui.warns)
