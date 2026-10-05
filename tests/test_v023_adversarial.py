@@ -403,15 +403,32 @@ def test_independent_verify_runs_commands(tmp_path):
     from minicode.blueteam import independent_verify, render_independent_verify
     ok_cmd = f'"{sys.executable}" -c "print(\'fine\')"'
     bad_cmd = f'"{sys.executable}" -c "print(\'boom\');raise SystemExit(3)"'
-    res = independent_verify(f"- 自验: `{ok_cmd}`\n- 自验: `{bad_cmd}`",
-                             tmp_path)
+    res, env_ok = independent_verify(f"- 自验: `{ok_cmd}`\n- 自验: `{bad_cmd}`",
+                                     tmp_path)
+    assert env_ok is True                       # 探针通过(命令级 FAIL 才算数)
     assert len(res) == 2
     assert res[0][1] is True and res[1][1] is False
-    rendered = render_independent_verify(res)
+    rendered = render_independent_verify(res, env_ok)
     assert "[PASS]" in rendered and "[FAIL]" in rendered
     assert "自述与实测不符" in rendered
     # 蓝队未声明自验命令 → 按协议视为自验缺失(数据不可信)
-    assert "自验缺失" in render_independent_verify([])
+    assert "自验缺失" in render_independent_verify([], True)
+
+
+def test_independent_verify_env_unusable_invalidates_report(tmp_path, monkeypatch):
+    """v0.24.2 P0 回归:python 不可达 → 环境不可用、报告作废——
+    而不是把 N 条环境性 FAIL 混进数据(首轮实战 6 条全 FAIL 即此)。"""
+    import minicode.blueteam as bt
+    monkeypatch.setattr(bt, "probe_environment",
+                        lambda cwd, timeout=30: (False, "'python' 不是内部或外部命令"))
+    res, env_ok = bt.independent_verify(
+        "- 自验: `python -c \"print(1)\"`\n- 自验: `python -c \"print(2)\"`",
+        tmp_path)
+    assert env_ok is False
+    assert len(res) == 1 and res[0][0].startswith("环境探针")   # 不逐条跑命令
+    rendered = bt.render_independent_verify(res, env_ok)
+    assert "环境不可用" in rendered and "数据作废" in rendered
+    assert "FAIL]" not in rendered                              # 不混进命令级数据
 
 
 def test_bluefix_default_mode_is_findings(tmp_path, monkeypatch):

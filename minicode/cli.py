@@ -1435,13 +1435,31 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                                      "self-verify after fixing.")
                 sub.run_turn(prompt)
                 result = sub_session.messages[-1].get("content") or ""
+                # 独立自验门:重跑蓝队声明的自验命令——自述不算数(v0.24.1);
+                # 环境不可用(python 探针失败)→ 报告整体作废(v0.24.2)
+                from .blueteam import (independent_verify,
+                                       render_independent_verify)
+                iv, env_ok = independent_verify(result, agent.config.cwd)
                 out = save_fix_report(
                     Path.cwd(),
                     f"# 蓝队修复报告 — mode={mode}\n\n"
                     f"输入：{latest.name}\n\n"
-                    + (result or "(蓝队无输出)"))
-                ui.info(f"蓝队完成，报告存档 {out}"
-                        "（/diff 查看改动，/verify 可复验）")
+                    + (result or "(蓝队无输出)")
+                    + "\n\n" + render_independent_verify(iv, env_ok))
+                if not env_ok:
+                    ui.error("独立自验门:解释器探针失败——环境不可用,"
+                             f"本报告数据作废（{iv[0][2][:120] if iv else ''}）")
+                elif not iv:
+                    ui.warn("⚠ 蓝队未声明自验命令——按协议视为自验缺失,"
+                            "本次数据不可信。")
+                else:
+                    failed_iv = sum(1 for _c, ok, _o in iv if not ok)
+                    ui.info(f"蓝队完成，独立自验 {len(iv) - failed_iv}/"
+                            f"{len(iv)} 通过，报告存档 {out}"
+                            "（/diff 查看改动）")
+                    if failed_iv:
+                        ui.error(f"独立自验存在 {failed_iv} 项未通过"
+                                 "——蓝队自述与实测不符")
     elif name == "/skills":
         from .tools.skills import (_hits, archive_stale_autoskills,
                                    load_skill, skills_catalog)

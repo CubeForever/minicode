@@ -17,6 +17,7 @@ mode="findings"(仅发现列表)与 mode="full"(全量,含证伪过程)运行,
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -43,7 +44,11 @@ BLUETEAM_PROMPT = r"""基于红队报告修复已确认的问题。你有写权�
    同类缺失校验、同类类型处理),一并处理或在报告中说明为何不适用;
 3. **修复后自验——自验命令必须用反引号逐条给出**(每行格式:
    `- 自验: \`<命令>\``)。这些命令会被评测脚本**独立重跑**,自述不算数;
-   命令失败就继续修。
+   命令失败就继续修。**禁止占位/示意命令**——明知跑不通还写的"假自验"
+   按未通过计,评测脚本先跑解释器探针,环境不可用时整份报告作废;
+4. **新路径对照契约**:修复引入的**新实现路径**要重新过一遍第 0 条
+   (重写可能让原本兑现的契约失效——如把直接求和改成滚动和,数值精度
+   契约就从"兑现"变"未兑现")。
 
 ## 输出(修复完成后)
 - 契约清单:每条承诺 → 已兑现/未兑现/无法验证(未兑现的必须已处理)
@@ -120,23 +125,72 @@ def findings_summary(report_md: str) -> str:
 _SELF_VERIFY_RX = re.compile(r"^\s*-\s*自验[:：]\s*`([^`]+)`", re.M)
 
 
+def gate_env() -> dict:
+    """独立自验门专用 env:解释器目录前置进 PATH(v0.24.2,P0 修复)。
+
+    首轮实战 6 条自验全 FAIL 即因门没带这套 env——蓝队声明的
+    `python ...` 在 Windows shell 里不可解析,而求解/红队的 env
+    (_base_env)有前置。门与它们必须同语义。
+    """
+    import sys as _sys
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    exe_dir = str(Path(_sys.executable).parent)
+    env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def probe_environment(cwd, timeout: int = 30) -> Tuple[bool, str]:
+    """解释器探针:`python` 在自验门 env 里可达吗?
+
+    不可达 → **环境不可用**,整批自验数据作废——而不是把 N 条命令
+    全标 FAIL 混进 precision 数据(v0.24.2,审查①:门响亮失败但报告
+    标"通过"的同构缺陷)。区分"环境问题(harness 的锅)"与
+    "命令失败(蓝队的锅)"是数据可信性的第一道分界。
+    """
+    try:
+        proc = subprocess.run('python -c "print(1)"', shell=True,
+                              cwd=str(cwd), capture_output=True,
+                              timeout=timeout, env=gate_env())
+        if proc.returncode == 0:
+            return True, ""
+        out = ((proc.stdout or b"") + (proc.stderr or b""))\
+            .decode("utf-8", "replace").strip()
+        return False, out[:200] or f"退出码 {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        return False, f"探针超时 {timeout}s"
+    except OSError as e:
+        return False, str(e)
+
+
 def verify_commands_from_output(text: str) -> List[str]:
     r"""从蓝队输出提取自验命令(格式:`- 自验: \`<命令>\``)。"""
     return [m.group(1).strip() for m in _SELF_VERIFY_RX.finditer(text)]
 
 
-def independent_verify(text: str, cwd, timeout: int = 120) -> List[Tuple[str, bool, str]]:
-    """独立自验门(v0.24.1,审查判定"最重要"的一条):**不信蓝队自述**,
-    把它声明的自验命令逐条重跑,返回 [(命令, 是否通过, 输出尾部)]。
+def independent_verify(text: str, cwd,
+                       timeout: int = 120) -> Tuple[List[Tuple[str, bool, str]], bool]:
+    """独立自验门(v0.24.1):**不信蓝队自述**,把它声明的自验命令逐条
+    重跑。返回 ([(命令, 是否通过, 输出尾部)], 环境是否可用)。
 
-    A/B 实测:两组蓝队都声称"24 passed"而项目里根本没有测试文件——
-    声明式自验不可信,数据可信度必须建立在独立重跑之上。
+    v0.24.2:先探针后执行——`python` 不可达时返回环境不可用
+    (env_ok=False),调用方必须把本报告整体标记作废,而不是把
+    环境性 FAIL 混进数据。env 统一走 gate_env()(P0 修复:门此前
+    没带解释器前置,Windows 下 6 条自验全 FAIL 而报告标"通过")。
     """
+    cmds = verify_commands_from_output(text)
+    if not cmds:
+        return [], True   # 自验缺失由调用方按协议判定,无需探针
+    env_ok, why = probe_environment(cwd)
+    if not env_ok:
+        return [("环境探针 python -c print(1)", False,
+                 f"环境不可用:{why}——本报告数据作废")], False
     results: List[Tuple[str, bool, str]] = []
-    for cmd in verify_commands_from_output(text):
+    for cmd in cmds:
         try:
             proc = subprocess.run(cmd, shell=True, cwd=str(cwd),
-                                  capture_output=True, timeout=timeout)
+                                  capture_output=True, timeout=timeout,
+                                  env=gate_env())
             out = ((proc.stdout or b"") + (proc.stderr or b""))\
                 .decode("utf-8", "replace").strip()
             results.append((cmd, proc.returncode == 0, out[-300:]))
@@ -144,10 +198,17 @@ def independent_verify(text: str, cwd, timeout: int = 120) -> List[Tuple[str, bo
             results.append((cmd, False, f"(独立复验超时 {timeout}s)"))
         except OSError as e:
             results.append((cmd, False, f"(无法执行:{e})"))
-    return results
+    return results, True
 
 
-def render_independent_verify(results: List[Tuple[str, bool, str]]) -> str:
+def render_independent_verify(results: List[Tuple[str, bool, str]],
+                              env_ok: bool = True) -> str:
+    if not env_ok:
+        why = results[0][2] if results else ""
+        return ("## 独立自验门 —— **环境不可用,本报告数据作废**\n\n"
+                f"解释器探针失败:{why}\n\n"
+                "命令级 FAIL 未逐条展开:环境问题属于 harness,不属于蓝队;"
+                "修复环境后重跑,本报告不进数据集。\n")
     if not results:
         return ("## 独立自验门\n\n蓝队未声明任何自验命令——"
                 "按 v0.24.1 协议视为**自验缺失**,数据不可信。\n")

@@ -140,26 +140,32 @@ def main() -> int:
                 shell=True, cwd=str(sandbox), capture_output=True,
                 timeout=120, env=_base_env())
             check_ok = cproc.returncode == 0
-            # 独立自验门:重跑蓝队声明的自验命令——自述不算数(v0.24.1)
+            # 独立自验门:重跑蓝队声明的自验命令——自述不算数(v0.24.1)。
+            # v0.24.2:环境不可用(python 探针失败)→ 整份报告作废,不进数据集
             from minicode.blueteam import (independent_verify,
                                            render_independent_verify)
-            iv = independent_verify(blue_out, sandbox)
+            iv, env_ok = independent_verify(blue_out, sandbox)
+            valid = env_ok          # 自验缺失(未声明命令)也按 v0.24.1 判不可信
             body = (f"# 蓝队 A/B — {args.task} · mode={mode}\n\n"
                     f"- 时间:{time.strftime('%Y-%m-%d %H:%M')}\n"
                     f"- 红队输入:{red_report.name}(实验内对本轮求解新跑)\n"
                     f"- 蓝队失败类别:{fail or '无'}\n"
-                    f"- 修复后校验:{'通过' if check_ok else '未通过'}\n\n"
+                    f"- 修复后校验:{'通过' if check_ok else '未通过'}\n"
+                    f"- 数据有效性:{'有效' if valid else '**作废(环境不可用/自验缺失)**'}\n\n"
                     f"## 修复前解法 diff\n\n```diff\n{pre_diff}\n```\n\n"
                     f"## 蓝队输出\n\n{blue_out}\n\n"
-                    + render_independent_verify(iv) + "\n\n"
+                    + render_independent_verify(iv, env_ok) + "\n\n"
                     f"## 修复后总 diff(蓝队改动 = 本节 − 上一节)\n\n"
                     f"```diff\n{post_diff}\n```\n")
             out = outdir / f"{args.task}-{mode}-{stamp}.md"
             out.write_text(body, encoding="utf-8")
-            results[mode] = {"check_ok": check_ok, "fail": fail, "out": out}
-            mark = "✓" if not fail else "✗"
-            print(f"[{mark}] mode={mode:8s} 修复后校验:"
-                  f"{'通过' if check_ok else '未通过'} → {out}")
+            results[mode] = {"check_ok": check_ok, "fail": fail, "out": out,
+                             "valid": valid}
+            bad = fail or not valid
+            mark = "✗" if bad else "✓"
+            reason = ("环境不可用——数据作废" if not valid
+                      else ("红队/蓝队失败:" + fail if fail else "通过"))
+            print(f"[{mark}] mode={mode:8s} {reason} → {out}")
         finally:
             if args.keep_sandbox:
                 print(f"    沙箱保留:{sandbox}")
