@@ -142,6 +142,29 @@ diff desync/env 不一致/占位自验）——每加一环无头链路就暴露
 3. **失败必须响亮**：任何"门在 FAIL 而报告标通过"的组合都是缺陷,
    与 v0.23.4 的空报告同罪。
 
+## 数据可信性不变量(v0.25 起,CI 强制)
+
+"数据可信"不再是需要每次记得检查的属性,而是可强制的约束:
+
+1. **harness 独占写入**:每份报告头部必须是可解析 frontmatter,
+   `data_validity` ∈ {valid, void:timeout, void:env_unavailable,
+   void:no_selfverify, void:json_parse, void:empty_result,
+   void:pre_invariant}——**缺失即作废**(void:missing);
+2. **CI 门禁**:`scripts/check_consistency.py` 扫描本目录与 eval/bluefix,
+   任一报告缺失/非法 data_validity 即 CI 失败;
+3. **门三态**:独立自验门输出 PASS/FAIL/**ERROR**——ERROR 是"命令没跑
+   起来"(超时/无法启动),与 FAIL(跑了但结果不对)分离,避免环境性
+   失败混进数据;FAIL 带 exit 码 + traceback 末行 + 归因(蓝队未修复
+   vs 自验写错);
+4. **超时退避**:无头调用超时自动 2× 重试一次(上限 600s);耗时与预算
+   写入 frontmatter——能区分"模型变慢"与"机器变慢";
+5. **作废不删数据**:作废报告一律保留(调参/排障证据链),只在统计口径
+   排除。
+
+**可见性**:`python scripts/data_audit.py` 输出有效率/作废率(按原因),
+`--strict` 在缺 frontmatter 时非零退出。连续六轮的静默失败根因都是
+"没有可见的失败率指标"——这个脚本让整类问题自动可见。
+
 ## 证据链说明
 
 `eval/redteam/` 与 `eval/bluefix/` 是 A/B 判定与 precision 标注的

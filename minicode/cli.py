@@ -1453,13 +1453,14 @@ def _command(line: str, agent: Agent, ui: UI, prompt_cwd: Path) -> bool:
                     ui.warn("⚠ 蓝队未声明自验命令——按协议视为自验缺失,"
                             "本次数据不可信。")
                 else:
-                    failed_iv = sum(1 for _c, ok, _o in iv if not ok)
-                    ui.info(f"蓝队完成，独立自验 {len(iv) - failed_iv}/"
-                            f"{len(iv)} 通过，报告存档 {out}"
-                            "（/diff 查看改动）")
-                    if failed_iv:
-                        ui.error(f"独立自验存在 {failed_iv} 项未通过"
-                                 "——蓝队自述与实测不符")
+                    n_fail = sum(1 for _c, st, _d in iv if st == "FAIL")
+                    n_err = sum(1 for _c, st, _d in iv if st == "ERROR")
+                    ui.info(f"蓝队完成，独立自验 {len(iv) - n_fail - n_err}/"
+                            f"{len(iv)} 通过（FAIL {n_fail} / ERROR {n_err}），"
+                            f"报告存档 {out}（/diff 查看改动）")
+                    if n_fail or n_err:
+                        ui.error(f"独立自验存在 {n_fail} 项 FAIL、{n_err} 项 "
+                                 "ERROR——蓝队自述与实测不符,详见报告归因")
     elif name == "/skills":
         from .tools.skills import (_hits, archive_stale_autoskills,
                                    load_skill, skills_catalog)

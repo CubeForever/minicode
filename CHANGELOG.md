@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.25.0 (2026-10-05)
+
+harness 硬化专版（三个不变量 + 诊断增强 + 退避重试；**不加新功能**）：
+
+连续六轮的静默失败历史——sys.path 缺根 → 二进制 null → diff 不落盘 →
+stderr 空 → diff desync → 门无 env——共同特征是"失败被静默吞掉、数据被
+当成有效"。本版把"数据可信"从流程约定升级为 CI 可强制的不变量。
+
+**不变量 1:数据有效性由 harness 独占写入（structured frontmatter）**
+- 报告头改为可解析 frontmatter:`data_validity` 取值域
+  {valid, void:timeout, void:env_unavailable, void:no_selfverify,
+  void:json_parse, void:empty_result, void:pre_invariant}
+- **缺失即作废**:无 frontmatter 或不可解析 → `void:missing`
+- `scripts/report_meta.py`:frontmatter 写入/解析/取值 的共享工具
+- **CI 门禁**:check_consistency 新增第 10 项——扫描 eval/redteam 与
+  eval/bluefix,任一报告缺失/非法 data_validity 即 CI 失败
+- 存量 17 份报告回填 `void:pre_invariant`(仅作证据链,不进统计)——
+  作废不删数据,保留调参/排障证据
+
+**不变量 2:FAIL 必须携带可归因诊断（门从二态升三态）**
+- PASS / FAIL / **ERROR** 三态:ERROR = 命令没跑起来（超时/OSError/
+  命令未启动),与"跑了但结果不对"彻底分离
+- FAIL 诊断三件套:exit 码 + **traceback 末行抽取** + 输出尾部(≤800)
+- **自动归因**:ValueError 与红队发现同类 → "蓝队未修复";
+  TypeError/NameError/SyntaxError → "自验命令本身写错";
+  命令未启动(退出码 127/9009 或 shell 文案) → 环境/自验写法
+- 输出解码双回落(utf-8 → gbk):Windows 控制台"不是内部或外部命令"
+  为 GBK,此前会变乱码使判定失效
+
+**诊断增强:超时自动退避重试 + 耗时入头（P1）**
+- `report_meta.run_headless`:超时以 2× 预算自动重试一次(上限 600s)——
+  超时是 harness 资源不足,不是产出质量问题,重试优先于作废
+- 每个无头调用记录耗时与最终预算,写入 frontmatter
+  (solve_seconds / redteam_seconds / bluefix_seconds / timeout_budget)
+
+**可见性:scripts/data_audit.py（P2,价值被审查低估的一项）**
+- 输出 有效率 / 作废率(按原因分类),`--strict` 在缺 frontmatter 时
+  非零退出,`--json` 供机器消费
+- 连续六轮的根因都是"没有可见的失败率指标"——本脚本让整类问题从
+  "靠人发现"变成"自动可见"
+
+测试 408 项(+9:三态/归因/ERROR/不变量枚举/退避重试/上限放弃)。
+
 ## 0.24.2 (2026-10-05)
 
 独立自验门实战收口 + 数据可信性纪律（第三轮标注的三个问题当日处理）：

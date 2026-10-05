@@ -1,3 +1,9 @@
+---
+task: feature-implement-spec-findings
+kind: legacy
+data_validity: void:pre_invariant
+note: 存量报告(早于 v0.25 不变量),仅作证据链,不进统计
+---
 # 蓝队 A/B — feature-implement-spec · mode=findings
 
 - 时间:2026-10-05 17:52
@@ -81,8 +87,10 @@ print('k-validation OK')"`
 
 ## 独立自验门(评测脚本重跑,非蓝队自述)
 - [FAIL] `python -c "from util import moving_average; assert moving_average([1,2,3,4],2)==[1.5,2.5,3.5]; assert moving_average([1,2,3,4],4)==[2.5]; assert moving_average([1,2,3,4],1)==[1.0,2.0,3.0,4.0]; xs=list(range(1,10)); assert len(moving_average(xs,3))==len(xs)-3+1"` — 'python' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���
+
 ���������ļ���
 - [FAIL] `python -c "from util import moving_average; [ (lambda: None if (lambda f: (f(),)) (lambda: (moving_average([1,2,3], bad), print('FAIL',bad))) )() for bad in [0,-1,5]] if False else None"` — 'python' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���
+
 ���������ļ���
 - [FAIL] `python -c "
 for bad in [0,-1,5]:
@@ -93,12 +101,16 @@ try:
     moving_average([], 0); raise SystemExit('FAIL empty')
 except ValueError: pass
 print('k-validation OK')"` — 'python' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���
+
 ���������ļ���
 - [FAIL] `python -c "from decimal import Decimal; from fractions import Fraction; from util import moving_average; r=moving_average([Decimal(1),Decimal(2),Decimal(3),Decimal(4)],2); assert r==[1.5,2.5,3.5] and all(type(x) is float for x in r), r; r=moving_average([Fraction(1),Fraction(2),Fraction(3),Fraction(4)],2); assert r==[1.5,2.5,3.5] and all(type(x) is float for x in r), r; assert all(type(x) is float for x in moving_average([1,2,3,4],2)); print('element-type float OK')"` — 'python' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���
+
 ���������ļ���
 - [FAIL] `python -c "import random; from util import moving_average; random.seed(0); xs=[random.uniform(-100,100) for _ in range(500)]; k=37; exp=[sum(xs[i:i+k])/k for i in range(len(xs)-k+1)]; got=moving_average(xs,k); assert len(got)==len(exp) and all(abs(a-b)<1e-9 for a,b in zip(exp,got)); print('rolling-sum correctness OK')"` — 'python' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���
+
 ���������ļ���
 - [FAIL] `python -c "import time; from util import moving_average; n=200000; xs=list(range(1,n+1)); k=100000; t=time.time(); r=moving_average(xs,k); assert len(r)==n-k+1 and time.time()-t<3.0; print('O(n) performance OK', round(time.time()-t,3))"` — 'python' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���
+
 ���������ļ���
 
 独立复验:0/6 通过 —— **存在未通过项,蓝队自述与实测不符**

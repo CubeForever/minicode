@@ -163,41 +163,103 @@ def probe_environment(cwd, timeout: int = 30) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def _decode_out(b: bytes) -> str:
+    """命令输出解码。Windows 控制台文案多为 GBK/ANSI,直接 utf-8 解码会
+    变乱码使"不是内部或外部命令"类判定失效——两种编码各解一次,取替换
+    字符更少者(v0.25;实测 cmd 的缺命令提示是 GBK 且退出码为 1)。"""
+    if not b:
+        return ""
+    best = b.decode("utf-8", errors="replace")
+    try:
+        alt = b.decode("gbk", errors="replace")
+        if alt.count("\ufffd") < best.count("\ufffd"):
+            best = alt
+    except (ValueError, UnicodeDecodeError):
+        pass
+    return best.strip()
+
+
 def verify_commands_from_output(text: str) -> List[str]:
     r"""从蓝队输出提取自验命令(格式:`- 自验: \`<命令>\``)。"""
     return [m.group(1).strip() for m in _SELF_VERIFY_RX.finditer(text)]
 
 
-def independent_verify(text: str, cwd,
-                       timeout: int = 120) -> Tuple[List[Tuple[str, bool, str]], bool]:
-    """独立自验门(v0.24.1):**不信蓝队自述**,把它声明的自验命令逐条
-    重跑。返回 ([(命令, 是否通过, 输出尾部)], 环境是否可用)。
+_TB_LAST_RX = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception))\s*:?.*$", re.M)
+_NOT_STARTED_RX = re.compile(
+    r"不是内部或外部命令|is not recognized as|command not found"
+    r"|无法将.*识别为|(?:'|\")?[\w./\\-]+(?:'|\")?: No such file")
 
-    v0.24.2:先探针后执行——`python` 不可达时返回环境不可用
-    (env_ok=False),调用方必须把本报告整体标记作废,而不是把
-    环境性 FAIL 混进数据。env 统一走 gate_env()(P0 修复:门此前
-    没带解释器前置,Windows 下 6 条自验全 FAIL 而报告标"通过")。
+
+def _traceback_last_line(out: str) -> str:
+    """从命令输出中抽取 traceback 末行(异常类型直接决定归因)。"""
+    hits = _TB_LAST_RX.findall(out)
+    return hits[-1].strip() if hits else ""
+
+
+def attribute_failure(cmd: str, out: str) -> str:
+    """FAIL 归因(v0.25 不变量 2):ValueError 与红队发现同类 → 蓝队没修好;
+    TypeError/NameError/SyntaxError/AttributeError → 自验命令本身写错;
+    命令无法启动(shell 报错)→ 环境。归因是提示,不是判决——供人工复核。"""
+    last = _traceback_last_line(out)
+    if "不是内部或外部命令" in out or "is not recognized" in out \
+            or "command not found" in out or "No such file" in out:
+        return "环境/命令不可启动"
+    if last:
+        if "ValueError" in last:
+            return "蓝队未修复(异常与红队发现同类)"
+        if re.search(r"(TypeError|NameError|SyntaxError|AttributeError|"
+                     r"KeyError|IndexError)", last):
+            return "自验命令本身写错"
+        return f"自验命令异常:{last[:80]}"
+    return "非零退出,无 traceback——需人工读完整输出"
+
+
+def independent_verify(text: str, cwd,
+                       timeout: int = 120) -> Tuple[List[Tuple[str, str, str]], bool]:
+    """独立自验门(v0.25 不变量 2+诊断增强):**不信蓝队自述**,逐条重跑
+    蓝队声明的自验命令。返回 ([(命令, 状态, 诊断)], 环境是否可用)。
+
+    状态三态:
+        PASS   命令退出码 0
+        FAIL   命令跑了、退出码非 0 —— 诊断含 exit/traceback 末行/输出尾部
+               (≤800 字符,保留 traceback 末行),归因 蓝队未修复 vs 自验写错
+        ERROR  命令没跑起来(超时/OSError/shell 报错)—— harness 或自验写法
+    环境不可用(探针失败)→ 单条 ERROR + env_ok=False,调用方整体作废。
     """
     cmds = verify_commands_from_output(text)
     if not cmds:
         return [], True   # 自验缺失由调用方按协议判定,无需探针
     env_ok, why = probe_environment(cwd)
     if not env_ok:
-        return [("环境探针 python -c print(1)", False,
+        return [("环境探针 python -c print(1)", "ERROR",
                  f"环境不可用:{why}——本报告数据作废")], False
-    results: List[Tuple[str, bool, str]] = []
+    results: List[Tuple[str, str, str]] = []
     for cmd in cmds:
         try:
             proc = subprocess.run(cmd, shell=True, cwd=str(cwd),
                                   capture_output=True, timeout=timeout,
                                   env=gate_env())
-            out = ((proc.stdout or b"") + (proc.stderr or b""))\
-                .decode("utf-8", "replace").strip()
-            results.append((cmd, proc.returncode == 0, out[-300:]))
         except subprocess.TimeoutExpired:
-            results.append((cmd, False, f"(独立复验超时 {timeout}s)"))
+            results.append((cmd, "ERROR", f"(独立复验超时 {timeout}s)"))
+            continue
         except OSError as e:
-            results.append((cmd, False, f"(无法执行:{e})"))
+            results.append((cmd, "ERROR", f"(无法启动:{e})"))
+            continue
+        out = _decode_out((proc.stdout or b"") + (proc.stderr or b""))
+        # 命令未启动:shell 对不存在命令的退出码(Windows 9009 / POSIX 127),
+        # 或 shell 文案匹配(GBK 控制台的"不是内部或外部命令")
+        if proc.returncode in (127, 9009) or _NOT_STARTED_RX.search(out):
+            results.append((cmd, "ERROR",
+                            f"命令未启动(退出码 {proc.returncode}):{out[-200:]}"))
+            continue
+        if proc.returncode == 0:
+            results.append((cmd, "PASS", out[-300:]))
+            continue
+        last = _traceback_last_line(out) or "(无 traceback)"
+        diag = (f"exit={proc.returncode}; traceback 末行: {last}; "
+                f"输出尾部: {out[-800:]}")
+        results.append((cmd, "FAIL",
+                        diag + f" | 归因: {attribute_failure(cmd, out)}"))
     return results, True
 
 
@@ -213,10 +275,15 @@ def render_independent_verify(results: List[Tuple[str, bool, str]],
         return ("## 独立自验门\n\n蓝队未声明任何自验命令——"
                 "按 v0.24.1 协议视为**自验缺失**,数据不可信。\n")
     lines = ["## 独立自验门(评测脚本重跑,非蓝队自述)"]
-    for cmd, ok, out in results:
-        lines.append(f"- [{'PASS' if ok else 'FAIL'}] `{cmd}`"
-                     + (f" — {out}" if not ok and out else ""))
-    failed = sum(1 for _c, ok, _o in results if not ok)
-    lines.append(f"\n独立复验:{len(results) - failed}/{len(results)} 通过"
-                 + (" —— **存在未通过项,蓝队自述与实测不符**" if failed else ""))
+    for cmd, state, diag in results:
+        lines.append(f"- [{state}] `{cmd}`"
+                     + (f"\n  - {diag}" if state != "PASS" and diag else ""))
+    n_pass = sum(1 for _c, s, _d in results if s == "PASS")
+    n_fail = sum(1 for _c, s, _d in results if s == "FAIL")
+    n_err = sum(1 for _c, s, _d in results if s == "ERROR")
+    lines.append(f"\n独立复验:{n_pass}/{len(results)} 通过"
+                 + (f"(FAIL {n_fail}, ERROR {n_err})"
+                    if n_fail or n_err else "")
+                 + (" —— **存在未通过项,蓝队自述与实测不符**"
+                    if n_fail or n_err else ""))
     return "\n".join(lines)

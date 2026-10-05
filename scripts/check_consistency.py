@@ -138,6 +138,28 @@ ignore = read(".gitignore")
 for key in ("dist/", "build/", "egg-info/", "minicode.json"):
     check(f".gitignore 覆盖 {key}", key in ignore)
 
+# ---------- 10. 实验报告 frontmatter 门禁（v0.25 不变量 1） ----------
+# 数据有效性由 harness 独占写入；报告缺失/不可解析 frontmatter 即视同作废，
+# 在 CI 层拦截——"数据可信"从流程约定变成可强制的约束。
+sys.path.insert(0, str(ROOT / "scripts"))
+try:
+    from report_meta import data_validity as _dv
+    _VALIDITY_PREFIXES = ("valid", "void:")
+    bad_reports = []
+    for _rel in ("eval/redteam", "eval/bluefix"):
+        _d = ROOT / _rel
+        if not _d.is_dir():
+            continue
+        for _p in sorted(_d.glob("*.md")):
+            _v = _dv(_p.read_text(encoding="utf-8", errors="replace"))
+            if _v == "void:missing" or not _v.startswith(_VALIDITY_PREFIXES):
+                bad_reports.append(f"{_rel}/{_p.name}={_v}")
+    check("实验报告 frontmatter 完备（缺失即作废）", not bad_reports,
+          f"不合规 {len(bad_reports)} 份: {bad_reports[:3]}")
+except ImportError as _e:  # report_meta 缺失也不该静默通过
+    check("实验报告 frontmatter 完备（缺失即作废）", False,
+          f"无法导入 report_meta: {_e}")
+
 # ---------- 结果 ----------
 print()
 if FAILURES:

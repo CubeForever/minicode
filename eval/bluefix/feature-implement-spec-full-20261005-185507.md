@@ -1,3 +1,9 @@
+---
+task: feature-implement-spec-full
+kind: legacy
+data_validity: void:pre_invariant
+note: 存量报告(早于 v0.25 不变量),仅作证据链,不进统计
+---
 # 蓝队 A/B — feature-implement-spec · mode=full
 
 - 时间:2026-10-05 19:11
@@ -105,8 +111,11 @@ All verified. Here is the final report.
 - [PASS] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; assert moving_average([1,2,3,4],4)==[2.5] and moving_average([1,2,3,4],1)==[1.0,2.0,3.0,4.0], 'k==len and k=1'"`
 - [PASS] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; [ (lambda ks: (lambda: (moving_average([1,2,3,4],ks), print('FAIL k=%d no-raise'%ks))[1] if True else None)() if False else None) for ks in []]; [print('k=%d ValueError OK'%ks) if (lambda ks: (moving_average([1,2,3,4],ks),False)[1] if False else (True) and None or None) else None for ks in []]; import itertools; [ (exec('try:\n moving_average([1,2,3,4],%d)\n print(\"FAIL\")\nexcept ValueError: print(\"k=%d OK\")'%(ks,ks))) for ks in [0,-1,5,100]]"`
 - [FAIL] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; [ (exec('try:\n moving_average([],%d)\n print(\"FAIL\")\nexcept ValueError: print(\"empty k=%d OK\")'%(ks))) for ks in [0,1]]"` — Traceback (most recent call last):
+
   File "<string>", line 1, in <module>
+
   File "<string>", line 1, in <listcomp>
+
 TypeError: not enough arguments for format string
 - [PASS] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; assert all(isinstance(x,float) for x in moving_average([1,2,3,4],2)), 'int->float'"`
 - [PASS] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; from decimal import Decimal; r=moving_average([Decimal('1'),Decimal('2'),Decimal('3'),Decimal('4')],2); assert r==[1.5,2.5,3.5] and all(isinstance(x,float) for x in r), 'Decimal->float (FIX)'"`
@@ -114,28 +123,47 @@ TypeError: not enough arguments for format string
 - [PASS] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; xs=[1.1,2.2,3.3,4.4]; assert moving_average(xs,2)==[sum(xs[i:i+2])/2 for i in range(3)], 'float values unchanged'"`
 - [PASS] `python -c "import sys,random; sys.path.insert(0,'.'); from util import moving_average; random.seed(1); xs=[random.uniform(-1e9,1e9) for _ in range(100000)]; k=5000; ma=moving_average(xs,k); ref=[sum(xs[i:i+k])/k for i in range(len(xs)-k+1)]; assert max(abs(a-b) for a,b in zip(ma,ref))==0.0, 'no drift'"`
 - [FAIL] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; r=moving_average([1+2j,3+4j],2); print('FAIL complex did not raise' if all(isinstance(x,(complex,)) for x in r) else 'complex handled')"` — en(xs) - k + 1)]
+
   File "C:\Users\lenovo\AppData\Local\Temp\minicode-bluefix-feature-implement-spec-full-i2ex9rjk\.\util.py", line 9, in <listcomp>
+
     return [float(sum(xs[i:i + k]) / k) for i in range(len(xs) - k + 1)]
+
 TypeError: float() argument must be a string or a real number, not 'complex'
 - [FAIL] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; moving_average([1,2,3,4],0)"` — Traceback (most recent call last):
+
   File "<string>", line 1, in <module>
+
   File "C:\Users\lenovo\AppData\Local\Temp\minicode-bluefix-feature-implement-spec-full-i2ex9rjk\.\util.py", line 8, in moving_average
+
     raise ValueError("k 必须大于 0 且不超过 len(xs)")
+
 ValueError: k 必须大于 0 且不超过 len(xs)
 - [FAIL] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; moving_average([1,2,3,4],-1)"` — Traceback (most recent call last):
+
   File "<string>", line 1, in <module>
+
   File "C:\Users\lenovo\AppData\Local\Temp\minicode-bluefix-feature-implement-spec-full-i2ex9rjk\.\util.py", line 8, in moving_average
+
     raise ValueError("k 必须大于 0 且不超过 len(xs)")
+
 ValueError: k 必须大于 0 且不超过 len(xs)
 - [FAIL] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; moving_average([1,2,3,4],5)"` — Traceback (most recent call last):
+
   File "<string>", line 1, in <module>
+
   File "C:\Users\lenovo\AppData\Local\Temp\minicode-bluefix-feature-implement-spec-full-i2ex9rjk\.\util.py", line 8, in moving_average
+
     raise ValueError("k 必须大于 0 且不超过 len(xs)")
+
 ValueError: k 必须大于 0 且不超过 len(xs)
 - [FAIL] `python -c "import sys; sys.path.insert(0,'.'); from util import moving_average; moving_average([],1)"` — Traceback (most recent call last):
+
   File "<string>", line 1, in <module>
+
   File "C:\Users\lenovo\AppData\Local\Temp\minicode-bluefix-feature-implement-spec-full-i2ex9rjk\.\util.py", line 8, in moving_average
+
     raise ValueError("k 必须大于 0 且不超过 len(xs)")
+
 ValueError: k 必须大于 0 且不超过 len(xs)
 
 独立复验:9/15 通过 —— **存在未通过项,蓝队自述与实测不符**

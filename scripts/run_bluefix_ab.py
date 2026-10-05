@@ -35,10 +35,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+import report_meta  # noqa: E402
 import run_eval  # noqa: E402
 from minicode.blueteam import (blue_input,  # noqa: E402
                                build_blueteam_prompt)
 from minicode.redteam import build_redteam_prompt  # noqa: E402
+from report_meta import run_headless  # noqa: E402
 
 PILOT_TASK = "feature-implement-spec"
 MODES = ("findings", "full")
@@ -91,12 +93,11 @@ def main() -> int:
             prefix=f"minicode-bluefix-{args.task}-{mode}-"))
         try:
             run_eval._setup_sandbox(sandbox, task)
-            # 求解(与红队实验同一套,重建"待修复"的代码状态)
-            subprocess.run(
-                [sys.executable, "-m", "minicode", "-p", task["instruction"],
-                 "--yolo", "--no-save", "--output-format", "json"],
-                cwd=str(sandbox), capture_output=True, timeout=args.timeout,
-                env=_base_env())
+            # 求解(与红队实验同一套,重建"待修复"的代码状态)。
+            # v0.25:全部无头调用走 run_headless —— 超时自动 2× 退避重试一次
+            # (上限 600s),不再因单次超时把有效数据判死。
+            s_proc, s_sec, s_budget, s_timeout = run_headless(
+                task["instruction"], sandbox, args.timeout, _base_env())
             pre_diff = _diff_snapshot(sandbox,
                                       (task.get("setup") or {}).get("files"))
             # 红队对本轮求解的 diff 现场重跑(v0.24.1,审查②:旧报告评审的
@@ -104,34 +105,38 @@ def main() -> int:
             if red_report is None:
                 rprompt = build_redteam_prompt(pre_diff,
                                                f"eval 任务 {args.task} 的解法")
-                rproc = subprocess.run(
-                    [sys.executable, "-m", "minicode", "-p", rprompt,
-                     "--yolo", "--no-save", "--output-format", "json"],
-                    cwd=str(sandbox), capture_output=True,
-                    timeout=args.timeout, env=_base_env())
-                red_out, _rfail = _extract(
-                    rproc.stdout.decode("utf-8", "replace"),
-                    rproc.stderr.decode("utf-8", "replace"))
+                r_proc, r_sec, r_budget, r_timeout = run_headless(
+                    rprompt, sandbox, args.timeout, _base_env())
+                red_out, red_fail = _extract(
+                    (r_proc.stdout.decode("utf-8", "replace") if r_proc else ""),
+                    (r_proc.stderr.decode("utf-8", "replace") if r_proc else ""))
+                if r_timeout:
+                    red_fail = red_fail or "timeout"
+                    red_out = red_out or f"(红队超时:{r_budget}s 预算用尽)"
                 red_report = outdir / f"redteam-fresh-{stamp}.md"
                 red_report.write_text(
-                    f"# 红队报告(实验内新跑,绑定本轮求解)— {args.task}\n\n"
+                    report_meta.frontmatter({
+                        "task": args.task, "kind": "redteam-fresh",
+                        "data_validity": "void:timeout" if r_timeout else "valid",
+                        "fail_category": red_fail or "none",
+                        "seconds": r_sec, "timeout_budget": r_budget,
+                    })
+                    + f"# 红队报告(实验内新跑,绑定本轮求解)— {args.task}\n\n"
                     + red_out, encoding="utf-8")
-                print(f"    红队已对本轮求解重跑 → {red_report.name}")
+                print(f"    红队已对本轮求解重跑({r_sec}s/预算{r_budget}s)"
+                      f" → {red_report.name}")
             report_md = red_report.read_text(encoding="utf-8")
             prompt = build_blueteam_prompt(blue_input(report_md, mode), mode)
+            b_proc, b_sec, b_budget, b_timeout = run_headless(
+                prompt, sandbox, args.timeout, _base_env())
             fail = ""
-            try:
-                proc = subprocess.run(
-                    [sys.executable, "-m", "minicode", "-p", prompt,
-                     "--yolo", "--no-save", "--output-format", "json"],
-                    cwd=str(sandbox), capture_output=True,
-                    timeout=args.timeout, env=_base_env())
-                blue_out, fail = _extract(
-                    proc.stdout.decode("utf-8", "replace"),
-                    proc.stderr.decode("utf-8", "replace"))
-            except subprocess.TimeoutExpired:
+            if b_timeout:
                 fail = "timeout"
-                blue_out = f"(蓝队调用失败:超时 {args.timeout}s)"
+                blue_out = f"(蓝队调用失败:超时,{b_budget}s 预算用尽)"
+            else:
+                blue_out, fail = _extract(
+                    b_proc.stdout.decode("utf-8", "replace"),
+                    b_proc.stderr.decode("utf-8", "replace"))
             post_diff = _diff_snapshot(sandbox,
                                        (task.get("setup") or {}).get("files"))
             cproc = subprocess.run(
@@ -145,13 +150,47 @@ def main() -> int:
             from minicode.blueteam import (independent_verify,
                                            render_independent_verify)
             iv, env_ok = independent_verify(blue_out, sandbox)
-            valid = env_ok          # 自验缺失(未声明命令)也按 v0.24.1 判不可信
-            body = (f"# 蓝队 A/B — {args.task} · mode={mode}\n\n"
+            n_pass = sum(1 for _c, st, _d in iv if st == "PASS")
+            n_fail = sum(1 for _c, st, _d in iv if st == "FAIL")
+            n_err = sum(1 for _c, st, _d in iv if st == "ERROR")
+            # 数据有效性由 harness 独占裁定(v0.25 不变量 1:缺失即作废)
+            if not env_ok:
+                validity = "void:env_unavailable"
+            elif b_timeout:
+                validity = "void:timeout"
+            elif not iv:
+                validity = "void:no_selfverify"
+            elif fail == "no-json":
+                validity = "void:json_parse"
+            elif fail == "empty-result":
+                validity = "void:empty_result"
+            else:
+                validity = "valid"
+            valid = validity == "valid"
+            body = (report_meta.frontmatter({
+                        "task": args.task,
+                        "kind": "bluefix-ab",
+                        "mode": mode,
+                        "data_validity": validity,
+                        "fail_category": fail or "none",
+                        "solve_seconds": s_sec,
+                        "redteam_seconds": r_sec,
+                        "bluefix_seconds": b_sec,
+                        "timeout_budget": b_budget,
+                        "verify_passed": n_pass,
+                        "verify_failed": n_fail,
+                        "verify_error": n_err,
+                        "verify_total": len(iv),
+                        "eval_check": "pass" if check_ok else "fail",
+                    })
+                    + f"# 蓝队 A/B — {args.task} · mode={mode}\n\n"
                     f"- 时间:{time.strftime('%Y-%m-%d %H:%M')}\n"
                     f"- 红队输入:{red_report.name}(实验内对本轮求解新跑)\n"
                     f"- 蓝队失败类别:{fail or '无'}\n"
                     f"- 修复后校验:{'通过' if check_ok else '未通过'}\n"
-                    f"- 数据有效性:{'有效' if valid else '**作废(环境不可用/自验缺失)**'}\n\n"
+                    f"- 耗时:求解 {s_sec}s / 红队 {r_sec}s / 蓝队 {b_sec}s"
+                    f"(预算 {b_budget}s)\n"
+                    f"- 数据有效性:{validity}\n\n"
                     f"## 修复前解法 diff\n\n```diff\n{pre_diff}\n```\n\n"
                     f"## 蓝队输出\n\n{blue_out}\n\n"
                     + render_independent_verify(iv, env_ok) + "\n\n"
@@ -160,12 +199,13 @@ def main() -> int:
             out = outdir / f"{args.task}-{mode}-{stamp}.md"
             out.write_text(body, encoding="utf-8")
             results[mode] = {"check_ok": check_ok, "fail": fail, "out": out,
-                             "valid": valid}
-            bad = fail or not valid
+                             "valid": valid, "validity": validity}
+            bad = not valid
             mark = "✗" if bad else "✓"
-            reason = ("环境不可用——数据作废" if not valid
-                      else ("红队/蓝队失败:" + fail if fail else "通过"))
-            print(f"[{mark}] mode={mode:8s} {reason} → {out}")
+            reason = ("数据作废(" + validity + ")" if not valid
+                      else ("蓝队失败类别:" + fail if fail else "通过"))
+            print(f"[{mark}] mode={mode:8s} {reason} · 蓝队 {b_sec}s/"
+                  f"预算 {b_budget}s · 自验 {n_pass}/{len(iv)} → {out.name}")
         finally:
             if args.keep_sandbox:
                 print(f"    沙箱保留:{sandbox}")

@@ -407,7 +407,7 @@ def test_independent_verify_runs_commands(tmp_path):
                                      tmp_path)
     assert env_ok is True                       # 探针通过(命令级 FAIL 才算数)
     assert len(res) == 2
-    assert res[0][1] is True and res[1][1] is False
+    assert res[0][1] == "PASS" and res[1][1] == "FAIL"   # v0.25 三态
     rendered = render_independent_verify(res, env_ok)
     assert "[PASS]" in rendered and "[FAIL]" in rendered
     assert "自述与实测不符" in rendered

@@ -1,3 +1,9 @@
+---
+task: feature-implement-spec-full
+kind: legacy
+data_validity: void:pre_invariant
+note: 存量报告(早于 v0.25 不变量),仅作证据链,不进统计
+---
 # 蓝队 A/B — feature-implement-spec · mode=full
 
 - 时间:2026-10-05 18:54

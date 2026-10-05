@@ -34,8 +34,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+import report_meta  # noqa: E402
 import run_eval  # noqa: E402  复用任务装载与沙箱搭建
 from minicode.redteam import LABELING_TABLE  # noqa: E402
+from report_meta import run_headless  # noqa: E402
 
 DEFAULT_TASKS = ["bugfix-off-by-one", "feature-cli-flag", "refactor-rename-symbol"]
 # 第二批(中等难度):红队能发挥的场域——解析逻辑/造测试/多步实现。
@@ -56,14 +58,11 @@ def _base_env() -> dict:
 
 
 def _solve(task: dict, timeout: int, sandbox: Path) -> bool:
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "minicode", "-p", task["instruction"],
-             "--yolo", "--no-save", "--output-format", "json"],
-            cwd=str(sandbox), capture_output=True, timeout=timeout,
-            env=_base_env())
-    except subprocess.TimeoutExpired:
-        print(f"    求解超时({timeout}s)——校验按现状执行", file=sys.stderr)
+    _proc, _sec, budget, timed_out = run_headless(
+        task["instruction"], sandbox, timeout, _base_env())
+    if timed_out:
+        print(f"    求解超时({budget}s 预算用尽)——校验按现状执行",
+              file=sys.stderr)
     cproc = subprocess.run(
         run_eval._check_command(task, sandbox, Path(task["_checks_dir"])),
         shell=True, cwd=str(sandbox), capture_output=True, timeout=120,
@@ -193,21 +192,27 @@ def main() -> int:
             ok = _solve(task, args.timeout, sandbox)
             diff = _diff_vs_setup(task, sandbox)
             prompt = build_redteam_prompt(diff, f"eval 任务 {tid} 的解法")
+            proc, rt_sec, rt_budget, rt_timeout = run_headless(
+                prompt, sandbox, args.timeout, _base_env())
             fail = ""
-            try:
-                proc = subprocess.run(
-                    [sys.executable, "-m", "minicode", "-p", prompt,
-                     "--yolo", "--no-save", "--output-format", "json"],
-                    cwd=str(sandbox), capture_output=True, timeout=args.timeout,
-                    env=_base_env())
+            if rt_timeout:
+                fail = "timeout"
+                report = (f"(红队调用失败:超时,{rt_budget}s 预算用尽)"
+                          "(v0.25 已自动 2× 退避重试一次)")
+            else:
                 report, fail = _extract_report(
                     proc.stdout.decode("utf-8", "replace"),
                     proc.stderr.decode("utf-8", "replace"))
-            except subprocess.TimeoutExpired:
-                fail = "timeout"
-                report = (f"(红队调用失败:超时 {args.timeout}s —— 发散-收敛"
-                          "提示词更长,必要时调大 --timeout)")
-            text = assemble_report(tid, ok, diff, report, sandbox)
+            validity = ("void:timeout" if rt_timeout
+                        else ("void:json_parse" if fail == "no-json"
+                              else ("void:empty_result" if fail == "empty-result"
+                                    else "valid")))
+            text = report_meta.frontmatter({
+                "task": tid, "kind": "redteam",
+                "data_validity": validity, "fail_category": fail or "none",
+                "seconds": rt_sec, "timeout_budget": rt_budget,
+                "eval_check": "pass" if ok else "fail",
+            }) + assemble_report(tid, ok, diff, report, sandbox)
             out = outdir / f"{tid}-{time.strftime('%Y%m%d-%H%M%S')}.md"
             out.write_text(text, encoding="utf-8")
             # 失败必须响亮(v0.23.4):报告照常落盘供排查,但控制台标 ✗
