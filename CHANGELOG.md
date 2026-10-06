@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.26.1 (2026-10-06)
+
+worktree 自省发现的两个 P1 修复 + 闭环演示(发现 → 修复 → 重探索验证):
+
+1. **elide 重入防护**(session.py):已瘦身结果(content 以
+   "[elided tool result:" 开头)不再被 microcompaction 再次打包——
+   高价值工具 budget=800 瘦身后 ≈840 字符仍 > min_chars 500,无防护时
+   每轮都再包一层产生嵌套标记;content 前缀哨兵跨会话持久化与存量
+   数据同样受保护。3 项回归(双次调用不嵌套/哨兵跨持久化/不误伤)
+2. **server.py /api/compact** 照 /api/turn 模式加 try/except + logging
+   ——compact 会调 LLM,失败时异常冒到 HTTPHandler 返回默认 500 HTML
+   且无日志
+3. 压缩后仍超限时 UI 明示"本回合不会重试"(单次 if 是防压缩风暴的
+   有意设计,但要让人知道)
+4. worktree.py 补跨盘符实测结论注释(D 仓库 → C worktree 0.3s)
+
+**闭环演示数据**:修复后重跑双路 worktree 自省,重探索报告"已修复"6 处、
+"未修复"0 处、"无异常捕获"0 处——两个缺陷的修复均被独立确认。
+
+测试 419 项(+3)。
+
 ## 0.26.0 (2026-10-06)
 
 worktree 并行探索第一版（v0.26 主题起步：**多方案并行,先只读后实现**）：
