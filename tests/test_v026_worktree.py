@@ -133,3 +133,52 @@ def test_partial_failure_keeps_successful_results(tmp_path, monkeypatch):
     out = _tool().run({"tasks": ["成功路", "失败路", "成功路2"]},
                       _ctx(repo, factory))
     assert "路报告-1" in out and "失败的路" in out   # 成功结果保留 + 失败说明
+
+
+# ---------- v0.26.1:worktree 自省发现的两个缺陷修复回归 ----------
+
+def test_elide_no_reentry_nesting():
+    """worktree 自省发现的 P1:高价值工具瘦身后 840 字符 > min_chars 500,
+    无防护时每轮 microcompaction 都会再包一层,产生嵌套标记。"""
+    from minicode.session import Session
+    s = Session()
+    big = "x" * 2000
+    s.add({"role": "user", "content": "q"})
+    s.add({"role": "assistant", "content": "a"})
+    for i in range(12):   # 12 条 tool 消息,超出 keep_recent=8
+        s.add({"role": "tool", "tool_call_id": str(i), "name": "write_file",
+               "content": big, "is_error": False})
+    first = s.elide_old_tool_results()
+    snapshot = [m.get("content") for m in s.messages]
+    second = s.elide_old_tool_results()
+    assert first > 0
+    assert second == 0                      # 已瘦身的不再处理
+    assert snapshot == [m.get("content") for m in s.messages]
+    assert sum(1 for c in snapshot
+               if c and c.count("[elided tool result:") > 1) == 0  # 无嵌套
+
+
+def test_elide_prefix_guard_survives_roundtrip(tmp_path):
+    """content 前缀哨兵跨会话持久化同样生效(存量已瘦身数据不重处理)。"""
+    from minicode.session import Session
+    s = Session()
+    s.add({"role": "user", "content": "q"})
+    s.add({"role": "tool", "tool_call_id": "1", "name": "write_file",
+           "content": "[elided tool result: 2000 chars] " + "y" * 900,
+           "is_error": False})
+    p = tmp_path / "s.json"
+    s.save(p)
+    s2 = Session.load(p)
+    assert s2.elide_old_tool_results() == 0   # 前缀哨兵存活于持久化
+
+
+def test_elide_still_processes_normal_results(tmp_path):
+    """防护不误伤:未瘦身的长结果(推出保留窗口后)仍正常处理。"""
+    from minicode.session import Session
+    s = Session()
+    s.add({"role": "user", "content": "q"})
+    s.add({"role": "tool", "tool_call_id": "1", "name": "read_file",
+           "content": "z" * 900, "is_error": False})
+    for i in range(10):   # 推出 keep_recent=8 窗口
+        s.add({"role": "assistant", "content": f"filler {i}"})
+    assert s.elide_old_tool_results() == 1

@@ -166,14 +166,22 @@ class Session:
     def elide_old_tool_results(self, keep_recent: int = 8, min_chars: int = 500) -> int:
         """Replace big old tool outputs with short markers (structure preserved),
         keeping the most recent ones verbatim. Retention budget is tool-aware:
-        write/edit results keep more than read-only listings. Returns number elided."""
+        write/edit results keep more than read-only listings. Returns number elided.
+
+        v0.26.1 重入防护(worktree 自省发现):已瘦身的结果(content 以
+        "[elided tool result:" 开头)不再处理——高价值工具 budget=800,
+        瘦身后 ≈840 字符仍 > min_chars,无防护时每轮 microcompaction 都会
+        再包一层,产生嵌套标记且内容逐次退化。用 content 前缀而非消息
+        dict 标记:跨会话持久化与存量数据同样受保护。
+        """
         n = len(self.messages)
         changed = 0
         for m in self.messages[:max(0, n - keep_recent)]:
             if m.get("role") != "tool":
                 continue
             content = m.get("content")
-            if isinstance(content, str) and len(content) > min_chars:
+            if isinstance(content, str) and len(content) > min_chars \
+                    and not content.startswith("[elided tool result:"):
                 budget = self._elide_budget(m.get("name", ""), bool(m.get("is_error")))
                 head = content[:budget].replace("\n", " ⏎ ")
                 m["content"] = f"[elided tool result: {len(content)} chars] {head}…"

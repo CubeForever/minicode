@@ -90,8 +90,17 @@ class MinicodeServer:
                     outer.agent.reset_session()
                     return self._json(200, {"ok": True, "messages": 0})
                 if self.path == "/api/compact":
-                    stats = outer.agent.compact()
-                    return self._json(200, {"ok": True, **stats})
+                    # 与 /api/turn 同款兜底(v0.26.1):compact 会调 LLM,
+                    # 失败时异常会冒到 HTTPHandler 返回默认 500 HTML 且无日志
+                    try:
+                        stats = outer.agent.compact()
+                        return self._json(200, {"ok": True, **stats})
+                    except Exception as e:
+                        import logging
+                        logging.getLogger("minicode.server").exception(
+                            "compact crashed")
+                        return self._json(500,
+                                          {"error": f"{type(e).__name__}: {e}"})
                 return self._json(404, {"error": "not found"})
 
         self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)

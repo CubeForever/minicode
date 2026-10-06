@@ -106,6 +106,8 @@ class WorktreeExploreTool(Tool):
         failures: List[str] = []
 
         def one(i: int, task: str) -> None:
+            # worktree 放在 %TEMP%(通常 C 盘)而仓库可能在 D 盘——跨盘仍正常:
+            # git worktree 靠 .git 文件指针而非同盘硬链接,实测 0.3s(v0.26.1)
             wt = Path(tempfile.mkdtemp(prefix=f"minicode-wt{i+1}-"))
             add = _git(["worktree", "add", "--detach", str(wt), "HEAD"], base)
             with lock:

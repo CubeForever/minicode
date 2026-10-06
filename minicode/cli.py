@@ -370,6 +370,13 @@ def _after_turn(agent: Agent) -> None:
             agent.compact()
         except (LLMError, RuntimeError) as e:
             ui.error(f"压缩失败：{e}")
+        else:
+            # 压缩是单次 if 非 while(避免压缩风暴)——仍超限时要明示,
+            # 而不是让用户在不知情中进入一个仍超限的回合(v0.26.1)
+            still = s.context_tokens()
+            if cfg.context_limit and still > cfg.context_limit * 0.8:
+                ui.warn(f"压缩后仍超限（{still:,} tokens）——本回合不会重试，"
+                        "下一回合结束会再次尝试压缩")
     _hmsg, _hout, _ok = agent._run_hook("turn_end", {"messages": len(s.messages)})
 
 
