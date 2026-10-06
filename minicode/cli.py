@@ -277,11 +277,14 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
             ui.info(f"已加载本地插件工具：{t.name}")
     agents = _custom_agents()
 
-    def factory(prompt: str, subagent_type: str = None) -> str:
+    def factory(prompt: str, subagent_type: str = None,
+                cwd: Path = None) -> str:
         sub_ui = SubUI(ui)
         sub_session = Session()
-        # 每个子代理独立 ShellState：并行分派时互不竞争 cwd/env/后台进程
-        sub_shell = ShellState(cfg.cwd, detect_shell(cfg.shell))
+        # 每个子代理独立 ShellState：并行分派时互不竞争 cwd/env/后台进程;
+        # cwd 参数(v0.26)供 worktree 探索把子代理放进独立 worktree
+        work_cwd = cwd or cfg.cwd
+        sub_shell = ShellState(work_cwd, detect_shell(cfg.shell))
         defn = agents.get((subagent_type or "").lower())
         if defn is not None:
             sub_provider = provider
@@ -299,14 +302,14 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
             else:
                 tools = list(build_registry(sub_shell, read_only=True).tools.values())
             sub_registry = ToolRegistry(tools)
-            sub_system = defn["prompt"] or SUBAGENT_PROMPT.format(cwd=cfg.cwd)
+            sub_system = defn["prompt"] or SUBAGENT_PROMPT.format(cwd=work_cwd)
         else:
             sub_provider = provider
             sub_registry = build_registry(sub_shell, read_only=True)
-            sub_system = SUBAGENT_PROMPT.format(cwd=cfg.cwd)
+            sub_system = SUBAGENT_PROMPT.format(cwd=work_cwd)
         sub = Agent(sub_provider, sub_session, sub_ui, cfg, sub_registry,
                     max_iterations=15)
-        sub.ctx = ToolContext(cwd=cfg.cwd, config=cfg, session=sub_session,
+        sub.ctx = ToolContext(cwd=work_cwd, config=cfg, session=sub_session,
                               ui=sub_ui, agent_factory=None)
         sub.system_prompt = sub_system
         result = sub.run_turn(prompt)

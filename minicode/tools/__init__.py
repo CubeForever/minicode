@@ -13,6 +13,7 @@ from .ask_user import AskUserTool
 from .memory import BrainSearchTool, BrainWriteTool
 from .panel import ConsultPanelTool
 from .skills import SkillTool
+from .worktree import WorktreeExploreTool
 
 __all__ = [
     "Tool", "ToolContext", "ToolError", "ToolRegistry", "truncate_middle",
@@ -21,14 +22,15 @@ __all__ = [
     "ShellState", "detect_shell", "TodoWriteTool", "DispatchAgentTool",
     "WebFetchTool", "WebSearchTool", "NotebookEditTool", "ApplyPatchTool",
     "ExitPlanTool", "AskUserTool", "BrainWriteTool", "BrainSearchTool",
-    "ConsultPanelTool", "SkillTool", "build_registry",
+    "ConsultPanelTool", "SkillTool", "WorktreeExploreTool",
+    "build_registry",
 ]
 
 
 def build_registry(shell_state, read_only: bool = False) -> ToolRegistry:
     tools = [ReadFileTool(), GlobTool(), GrepTool(), ListDirTool(),
              WebFetchTool(), WebSearchTool(), ConsultPanelTool(), SkillTool(),
-             BrainSearchTool()]
+             BrainSearchTool(), WorktreeExploreTool()]
     if not read_only:
         tools += [WriteFileTool(), EditFileTool(), ApplyPatchTool(),
                   NotebookEditTool(),
