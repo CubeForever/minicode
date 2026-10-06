@@ -12,9 +12,16 @@ v0.26 范围限定(与审查共识一致):
   dispatch_agent 即可,worktree 的 N 倍成本换不来收益;
 - 基于当前 HEAD 的**已提交状态**——未提交改动不在探索范围内。
 
-worktree 与 hits(方案 C,v0.25.3 定稿):子代理加载技能会把命中写进
-worktree 自己的 .hits.json,随 worktree 一起删除——主仓库数据不受污染,
-符合"worktree 不写命中"的语义,无需额外代码。
+worktree 与 hits(方案 C,v0.25.3 定稿):子代理加载技能**会**把命中写
+进 worktree 自己的 .hits.json,worktree 删除时随之消失——主仓库数据
+不受污染(准确说:是"写了但随删除",不是"不写";v0.26.2 勘误)。
+若将来 worktree 引入存活/复用机制,"写了又删"会成为问题,届时需
+实现跳过逻辑(判据:git rev-parse --show-toplevel != 主仓根)。
+
+**dogfooding 记录**:本工具首次真实任务(minicode 仓库自省,双路)即
+发现 3 个真实缺陷(elide 重入无防护 P1 / server.py /api/compact 无
+异常兜底 P1 / 压缩后仍超限无告知 P2),全部当日修复并经重探索确认
+——worktree 隔离探索的工程价值由此实测。
 """
 from __future__ import annotations
 
@@ -58,7 +65,9 @@ class WorktreeExploreTool(Tool):
         "subagent; reports are merged. Use for multi-angle investigations "
         "(root-cause hunts, design-space surveys) on the committed state — "
         "not for single-path tasks, and uncommitted changes are not visible. "
-        "Requires a git repository. Need more lanes? Run in batches of 2-4.")
+        "Requires a git repository. Need more lanes? Run in batches of 2-4. "
+        "NOTE: worktrees are ephemeral sandboxes — brain/skill/experience "
+        "deposits made inside them are NOT preserved in the main repository.")
     input_schema = {
         "type": "object",
         "properties": {

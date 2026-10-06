@@ -160,7 +160,10 @@ try:
                   and _fm.get("verify_verdict") not in _VERDICTS):
                 # v0.25.3:valid 的蓝队报告必须带修复质量判定——缺失即不合规
                 # (链路可信 ≠ 修复达标,后者缺失会让修复率统计失真);
-                # 红队报告无自验环节,不要求该字段
+                # 红队报告无自验环节,不要求该字段。
+                # 豁免前提:红队报告不声明自验命令。若将来红队引入自验
+                # 机制,本豁免需重审(redteam-fresh 应显式写
+                # verify_verdict: n/a,而非依赖字段缺失被跳过)
                 bad_reports.append(f"{_rel}/{_p.name}=valid缺verify_verdict")
     check("实验报告 frontmatter 完备（valid 必带 verify_verdict）",
           not bad_reports,
