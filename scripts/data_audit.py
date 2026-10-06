@@ -45,6 +45,7 @@ def audit(base: Path) -> dict:
                 "path": str(p.relative_to(base)).replace("\\", "/"),
                 "dir": rel,
                 "validity": data_validity(text),
+                "verify_verdict": fm.get("verify_verdict", ""),
                 "task": fm.get("task", ""),
                 "kind": fm.get("kind", ""),
                 "mode": fm.get("mode", ""),
@@ -74,6 +75,9 @@ def summarize(rows: list) -> dict:
             sv = sum(1 for r in sub if r["validity"] == "valid")
             out["by_dir"][rel] = {"total": len(sub), "valid": sv,
                                   "valid_rate": round(sv / len(sub) * 100, 1)}
+    # 修复质量判定维度(v0.25.2):仅对 valid 报告统计——链路可信 ≠ 修复达标
+    verdicts = Counter(r["verify_verdict"] for r in valid if r["verify_verdict"])
+    out["by_verdict"] = dict(verdicts)
     return out
 
 
@@ -101,6 +105,9 @@ def main() -> int:
         if s["missing"]:
             print(f"  ⚠ {s['missing']} 份缺 frontmatter(void:missing)"
                   "——不变量 1 要求 harness 独占写入")
+        if s.get("by_verdict"):
+            print("  修复质量判定(valid 报告):" + "、".join(
+                f"{k} {v}" for k, v in sorted(s["by_verdict"].items())))
     if args.strict and s["missing"]:
         return 1
     return 0

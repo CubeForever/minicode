@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.25.2 (2026-10-06)
+
+语义漏洞修复 + 蓝队提示词合并自验(审查定稿的三小项,进 v0.26 前收口):
+
+**P0:verify_verdict——"链路可信"与"修复达标"拆为正交两维**
+- v0.25.1 尝试 3 的 14 条自验全 FAIL,报告却标 data_validity=valid——
+  valid 混着"环境与链路可信"与"修复质量达标"两个含义,读报告的人会
+  误以为修复可信,统计修复成功率时也会被 shell 引号类的 0% 污染
+- 新增 `verify_verdict` 判定(独立自验门结果 → 修复质量):
+  verified(全 PASS)/ unverified(全 FAIL 且归因均"自验写错",
+  修复质量未知)/ failed(全 FAIL 且有"蓝队未修复"归因,修复确认
+  无效)/ mixed(部分通过或混有 ERROR)/ none(无自验条目)
+- frontmatter 新增 verify_verdict 字段;data_audit 新增
+  "修复质量判定(valid 报告)"一维——统计蓝队修复率只能用 verified
+
+**P1:归因案例入注释**(blueteam.py attribute_failure docstring):
+Windows 蓝队高频陷阱 `python -c '...'` 单引号 → cmd.exe 输出
+"SyntaxError: unterminated string literal" 且退出码 1(非 9009),
+14/14 归因正确(v0.25.1 实测)——下一个改提示词的人会在代码里看到
+
+**P1:蓝队提示词合并自验断言**:同类契约的多条断言用分号连进同一条
+命令——Windows 每条命令的进程启动开销很高,14 条拆开跑既慢又稀释判定;
+(纯提示词层优化,不动机制)
+
+测试 409 项(+1:verify_verdict 真值表)。
+
 ## 0.25.1 (2026-10-06)
 
 v0.25 三不变量的真数据验证跑 + 两个实战发现当日修复：

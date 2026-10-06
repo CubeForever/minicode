@@ -48,6 +48,8 @@ BLUETEAM_PROMPT = r"""基于红队报告修复已确认的问题。你有写权�
    按未通过计,评测脚本先跑解释器探针,环境不可用时整份报告作废;
    **`-c` 参数必须用双引号包裹,命令内字符串用单引号**(Windows cmd
    不认单引号包裹,实测 14 条单引号自验全部 SyntaxError);
+   **合并自验断言**:同类契约的多条断言用分号连进同一条命令——
+   Windows 每条命令的进程启动开销很高,14 条拆开跑既慢又稀释判定;
 4. **新路径对照契约**:修复引入的**新实现路径**要重新过一遍第 0 条
    (重写可能让原本兑现的契约失效——如把直接求和改成滚动和,数值精度
    契约就从"兑现"变"未兑现")。
@@ -201,7 +203,13 @@ def _traceback_last_line(out: str) -> str:
 def attribute_failure(cmd: str, out: str) -> str:
     """FAIL 归因(v0.25 不变量 2):ValueError 与红队发现同类 → 蓝队没修好;
     TypeError/NameError/SyntaxError/AttributeError → 自验命令本身写错;
-    命令无法启动(shell 报错)→ 环境。归因是提示,不是判决——供人工复核。"""
+    命令无法启动(shell 报错)→ 环境。归因是提示,不是判决——供人工复核。
+
+    已验证的高频陷阱(v0.25.1 实测,14/14 归因正确):Windows 蓝队爱写
+    `python -c '...'`(单引号),cmd.exe 不解析单引号 → 输出
+    "SyntaxError: unterminated string literal" 且退出码 1(非 9009)——
+    必须归为"自验命令本身写错",绝不能误判"蓝队未修复"。
+    提示词已明令 -c 用双引号(见 BLUETEAM_PROMPT 要求 3)。"""
     last = _traceback_last_line(out)
     if "不是内部或外部命令" in out or "is not recognized" in out \
             or "command not found" in out or "No such file" in out:
@@ -265,7 +273,33 @@ def independent_verify(text: str, cwd,
     return results, True
 
 
-def render_independent_verify(results: List[Tuple[str, bool, str]],
+def verify_verdict(results: List[Tuple[str, str, str]]) -> str:
+    """修复质量判定(v0.25.2,审查定稿——与链路可信性分离的两个维度):
+
+        verified    全部自验 PASS——修复质量达标
+        unverified  全部 FAIL 且归因均为"自验命令本身写错"——修复质量未知
+                    (链路可信但自验跑不起来,典型:单引号 -c)
+        failed      全部 FAIL 且至少一条归因"蓝队未修复"——修复确认无效
+        mixed       部分通过/部分失败,或混有 ERROR——部分可归因
+        none        无自验条目(此时 data_validity 应为 void:no_selfverify)
+
+    data_validity(链路可信性)与 verify_verdict(修复达标)是两个正交
+    维度:v0.25.1 尝试 3 曾 14 条自验全 FAIL 仍标 valid——链路可信、
+    修复未经验证,统计蓝队修复率时只能用 verified 的报告。
+    """
+    if not results:
+        return "none"
+    n_pass = sum(1 for _c, st, _d in results if st == "PASS")
+    blue_unfixed = sum(1 for _c, st, d in results
+                       if st == "FAIL" and "蓝队未修复" in d)
+    if n_pass == len(results):
+        return "verified"
+    if n_pass == 0:
+        return "failed" if blue_unfixed else "unverified"
+    return "mixed"
+
+
+def render_independent_verify(results: List[Tuple[str, str, str]],
                               env_ok: bool = True) -> str:
     if not env_ok:
         why = results[0][2] if results else ""

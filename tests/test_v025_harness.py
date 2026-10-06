@@ -143,3 +143,27 @@ def test_run_headless_gives_up_at_cap(tmp_path, monkeypatch):
         "x", tmp_path, timeout=400, env={}, max_budget=600)
     assert timed_out is True
     assert budget == 600 and calls["n"] == 2   # 400 → 600(上限),只重试一次
+
+
+# ---------- v0.25.2:verify_verdict(修复质量判定,与链路可信性正交) ----------
+
+def test_verify_verdict_truth_table(tmp_path):
+    ok = f'"{sys.executable}" -c "print(1)"'
+    val_fail = f'"{sys.executable}" -c "raise ValueError(0)"'
+    syn_fail = f'"{sys.executable}" -c "print(未定义)"'
+    # 全 PASS → verified
+    res, _ = _gate(tmp_path, [ok, ok])
+    assert report_meta is not None
+    from minicode.blueteam import verify_verdict
+    assert verify_verdict(res) == "verified"
+    # 全 FAIL 且归因均"自验写错" → unverified(修复质量未知)
+    res2, _ = _gate(tmp_path, [syn_fail, syn_fail])
+    assert verify_verdict(res2) == "unverified"
+    # 全 FAIL 且有"蓝队未修复"归因 → failed(修复确认无效)
+    res3, _ = _gate(tmp_path, [val_fail, val_fail])
+    assert verify_verdict(res3) == "failed"
+    # 混合 → mixed
+    res4, _ = _gate(tmp_path, [ok, val_fail])
+    assert verify_verdict(res4) == "mixed"
+    # 空 → none
+    assert verify_verdict([]) == "none"

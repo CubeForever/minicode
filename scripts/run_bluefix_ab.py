@@ -38,7 +38,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import report_meta  # noqa: E402
 import run_eval  # noqa: E402
 from minicode.blueteam import (blue_input,  # noqa: E402
-                               build_blueteam_prompt)
+                               build_blueteam_prompt,
+                               verify_verdict)
 from minicode.redteam import build_redteam_prompt  # noqa: E402
 from report_meta import run_headless  # noqa: E402
 
@@ -157,6 +158,7 @@ def main() -> int:
             n_pass = sum(1 for _c, st, _d in iv if st == "PASS")
             n_fail = sum(1 for _c, st, _d in iv if st == "FAIL")
             n_err = sum(1 for _c, st, _d in iv if st == "ERROR")
+            verdict = verify_verdict(iv)
             # 数据有效性由 harness 独占裁定(v0.25 不变量 1:缺失即作废)
             if not env_ok:
                 validity = "void:env_unavailable"
@@ -185,6 +187,7 @@ def main() -> int:
                         "verify_failed": n_fail,
                         "verify_error": n_err,
                         "verify_total": len(iv),
+                        "verify_verdict": verdict,
                         "eval_check": "pass" if check_ok else "fail",
                     })
                     + f"# 蓝队 A/B — {args.task} · mode={mode}\n\n"
