@@ -144,21 +144,29 @@ for key in ("dist/", "build/", "egg-info/", "minicode.json"):
 # 在 CI 层拦截——"数据可信"从流程约定变成可强制的约束。
 sys.path.insert(0, str(ROOT / "scripts"))
 try:
-    from report_meta import data_validity as _dv
-    _VALIDITY_PREFIXES = ("valid", "void:")
+    from report_meta import parse_frontmatter as _pf
+    _VERDICTS = ("verified", "unverified", "failed", "mixed")
     bad_reports = []
     for _rel in ("eval/redteam", "eval/bluefix"):
         _d = ROOT / _rel
         if not _d.is_dir():
             continue
         for _p in sorted(_d.glob("*.md")):
-            _v = _dv(_p.read_text(encoding="utf-8", errors="replace"))
-            if _v == "void:missing" or not _v.startswith(_VALIDITY_PREFIXES):
+            _fm = _pf(_p.read_text(encoding="utf-8", errors="replace"))
+            _v = _fm.get("data_validity", "void:missing")
+            if not (_v == "valid" or _v.startswith("void:")):
                 bad_reports.append(f"{_rel}/{_p.name}={_v}")
-    check("实验报告 frontmatter 完备（缺失即作废）", not bad_reports,
+            elif (_v == "valid" and _fm.get("kind", "").startswith("bluefix")
+                  and _fm.get("verify_verdict") not in _VERDICTS):
+                # v0.25.3:valid 的蓝队报告必须带修复质量判定——缺失即不合规
+                # (链路可信 ≠ 修复达标,后者缺失会让修复率统计失真);
+                # 红队报告无自验环节,不要求该字段
+                bad_reports.append(f"{_rel}/{_p.name}=valid缺verify_verdict")
+    check("实验报告 frontmatter 完备（valid 必带 verify_verdict）",
+          not bad_reports,
           f"不合规 {len(bad_reports)} 份: {bad_reports[:3]}")
 except ImportError as _e:  # report_meta 缺失也不该静默通过
-    check("实验报告 frontmatter 完备（缺失即作废）", False,
+    check("实验报告 frontmatter 完备（valid 必带 verify_verdict）", False,
           f"无法导入 report_meta: {_e}")
 
 # ---------- 11. 全仓 Python 文件 ast 可解析（v0.25.1,工具层强制） ----------

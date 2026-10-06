@@ -13,6 +13,8 @@ verify_failed: 14
 verify_error: 0
 verify_total: 14
 eval_check: pass
+
+verify_verdict: unverified
 ---
 # 蓝队 A/B — feature-implement-spec · mode=findings
 
@@ -187,33 +189,51 @@ except ValueError:
 ## 独立自验门(评测脚本重跑,非蓝队自述)
 - [FAIL] `python -c 'from util import moving_average as m; assert m([1,2,3,4],2)==[1.5,2.5,3.5]; print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from util import moving_average as m; assert len(m([1,2,3,4,5],3))==3 and len(m([1,2,3],1))==3 and len(m([1,2,3],3))==1; print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from util import moving_average as m; assert all(type(x) is float for x in m([1,2,3],2)); print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from decimal import Decimal; from util import moving_average as m; r=m([Decimal("1"),Decimal("2"),Decimal("3")],2); assert all(type(x) is float for x in r) and r==[1.5,2.5]; print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from fractions import Fraction; from util import moving_average as m; r=m([Fraction(1),Fraction(2),Fraction(3)],2); assert all(type(x) is float for x in r) and r==[1.5,2.5]; print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from util import moving_average as m; exec("try:\n m([1,2,3,4],2.5)\n raise SystemExit(1)\nexcept ValueError: pass"); print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c '
 from util import moving_average as m
@@ -224,8 +244,11 @@ except ValueError:
     print("ok")
 '`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     '
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c '
 from util import moving_average as m
@@ -236,8 +259,11 @@ except ValueError:
     print("ok")
 '`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     '
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c '
 from util import moving_average as m
@@ -248,13 +274,19 @@ except ValueError:
     print("ok")
 '`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     '
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from util import moving_average as m; assert m([1,2,3,4], True)==[1.0,2.0,3.0,4.0]; print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c '
 from util import moving_average as m
@@ -267,8 +299,11 @@ for bad in (0, -1, 5):
 print("ok")
 '`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     '
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c '
 from util import moving_average as m
@@ -279,13 +314,19 @@ except TypeError:
     print("ok")
 '`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     '
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c 'from util import moving_average as m; assert m([1,2,3],3)==[2.0] and m([1,2,3],1)==[1.0,2.0,3.0] and m([-1.0,-2.0,4.0],2)==[-1.5,1.0]; print("ok")'`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     'from
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 - [FAIL] `python -c '
 from util import moving_average as m
@@ -296,8 +337,11 @@ except ValueError:
     print("ok")
 '`
   - exit=1; traceback 末行: SyntaxError; 输出尾部: File "<string>", line 1
+
     '
+
     ^
+
 SyntaxError: unterminated string literal (detected at line 1) | 归因: 自验命令本身写错
 
 独立复验:0/14 通过(FAIL 14, ERROR 0) —— **存在未通过项,蓝队自述与实测不符**

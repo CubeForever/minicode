@@ -41,6 +41,10 @@ def audit(base: Path) -> dict:
             except OSError:
                 text = ""
             fm = parse_frontmatter(text)
+            try:
+                mtime = p.stat().st_mtime
+            except OSError:
+                mtime = 0.0
             rows.append({
                 "path": str(p.relative_to(base)).replace("\\", "/"),
                 "dir": rel,
@@ -50,6 +54,7 @@ def audit(base: Path) -> dict:
                 "kind": fm.get("kind", ""),
                 "mode": fm.get("mode", ""),
                 "seconds": fm.get("seconds") or fm.get("bluefix_seconds") or "",
+                "mtime": mtime,
             })
     return {"rows": rows}
 
@@ -75,9 +80,36 @@ def summarize(rows: list) -> dict:
             sv = sum(1 for r in sub if r["validity"] == "valid")
             out["by_dir"][rel] = {"total": len(sub), "valid": sv,
                                   "valid_rate": round(sv / len(sub) * 100, 1)}
-    # 修复质量判定维度(v0.25.2):仅对 valid 报告统计——链路可信 ≠ 修复达标
-    verdicts = Counter(r["verify_verdict"] for r in valid if r["verify_verdict"])
+    # 修复质量判定维度(v0.25.2):仅对 valid 且蓝队类的报告统计——
+    # 链路可信 ≠ 修复达标;红队报告无自验环节,不参与 verdict 统计。
+    # verdict 缺失的蓝队报告单独计数(v0.25.3 门禁会拦,这里先可见)
+    bluefix_valid = [r for r in valid if "bluefix" in r.get("kind", "")]
+    verdicts = Counter(r["verify_verdict"] for r in bluefix_valid
+                       if r["verify_verdict"])
     out["by_verdict"] = dict(verdicts)
+    out["verdict_missing"] = sum(1 for r in bluefix_valid
+                                 if not r["verify_verdict"])
+
+    # 按日期分桶(v0.25.3,审查④):累计统计会随数据量稀释,"近 7 天有效率"
+    # 才是当前机制健康度的真实指标;存量(pre_invariant)单独归类。
+    import time as _time
+    now = _time.time()
+    buckets = {"recent_7d": [], "older": [], "pre_invariant": []}
+    for r in rows:
+        if r["validity"] == "void:pre_invariant":
+            buckets["pre_invariant"].append(r)
+        elif now - r.get("mtime", 0) <= 7 * 86400:
+            buckets["recent_7d"].append(r)
+        else:
+            buckets["older"].append(r)
+    out["by_date"] = {}
+    for name, sub in buckets.items():
+        if not sub:
+            continue
+        sv = sum(1 for r in sub if r["validity"] == "valid")
+        out["by_date"][name] = {"total": len(sub), "valid": sv,
+                                "valid_rate": round(sv / len(sub) * 100, 1)
+                                if sub else 0.0}
     return out
 
 
@@ -108,6 +140,14 @@ def main() -> int:
         if s.get("by_verdict"):
             print("  修复质量判定(valid 报告):" + "、".join(
                 f"{k} {v}" for k, v in sorted(s["by_verdict"].items())))
+        if s["verdict_missing"]:
+            print(f"  ⚠ {s['verdict_missing']} 份 valid 报告缺 verify_verdict"
+                  "——统计修复率时不可计入")
+        for name, d in s.get("by_date", {}).items():
+            label = {"recent_7d": "近 7 天", "older": "更早",
+                     "pre_invariant": "历史存量(pre_invariant)"}[name]
+            print(f"  {label:24s} {d['valid']}/{d['total']} 有效"
+                  f"({d['valid_rate']}%)")
     if args.strict and s["missing"]:
         return 1
     return 0

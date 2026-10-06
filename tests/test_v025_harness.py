@@ -167,3 +167,33 @@ def test_verify_verdict_truth_table(tmp_path):
     assert verify_verdict(res4) == "mixed"
     # 空 → none
     assert verify_verdict([]) == "none"
+
+
+# ---------- v0.25.3:data_audit 按日期分桶 + verdict 口径 ----------
+
+def test_data_audit_summarize_buckets_and_verdict():
+    from data_audit import summarize
+    now = __import__("time").time()
+    rows = [
+        # 近 7 天蓝队 verified
+        {"dir": "eval/bluefix", "validity": "valid", "verify_verdict": "verified",
+         "mtime": now, "kind": "bluefix-ab"},
+        # 近 7 天蓝队 valid 但缺 verdict → verdict_missing 计 1
+        {"dir": "eval/bluefix", "validity": "valid", "verify_verdict": "",
+         "mtime": now - 3 * 86400, "kind": "bluefix-ab"},
+        # 红队报告无 verdict → 不计入 verdict_missing
+        {"dir": "eval/redteam", "validity": "valid", "verify_verdict": "",
+         "mtime": now, "kind": "redteam-fresh"},
+        # 30 天前的蓝队报告 → older 桶
+        {"dir": "eval/bluefix", "validity": "valid", "verify_verdict": "mixed",
+         "mtime": now - 30 * 86400, "kind": "bluefix-ab"},
+        # 存量 → pre_invariant 桶(无论多新)
+        {"dir": "eval/bluefix", "validity": "void:pre_invariant",
+         "verify_verdict": "", "mtime": now, "kind": "legacy"},
+    ]
+    s = summarize(rows)
+    assert s["by_date"]["recent_7d"] == {"total": 3, "valid": 3, "valid_rate": 100.0}
+    assert s["by_date"]["older"]["total"] == 1
+    assert s["by_date"]["pre_invariant"]["total"] == 1
+    assert s["by_verdict"] == {"verified": 1, "mixed": 1}
+    assert s["verdict_missing"] == 1   # 红队报告不计入

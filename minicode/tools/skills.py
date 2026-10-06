@@ -75,11 +75,14 @@ def _parse(path: Path) -> Tuple[str, str, str]:
 
 
 def _hits(cwd) -> Dict[str, dict]:
-    # 遥测键 == 技能目录名（v0.22.1 对齐）。注意：hits 文件按项目 cwd
-    # 隔离——v0.24 若做 git worktree 并行子代理，每个 worktree 是独立
-    # cwd，会各写一份 hits 且归档判定只看当前 worktree 那份。届时必须
-    # 先定 hits 归属（按 git 仓库根归一，或全局按仓库身份聚合），否则
-    # 重度使用的技能会在别的 worktree 视角被判零命中而误归档。
+    # 遥测键 == 技能目录名（v0.22.1 对齐）。hits 文件按项目 cwd 隔离。
+    # worktree 归属已定稿（v0.25.3,方案 C）：worktree 并行子代理**不写
+    # 命中**（只读技能），归档判定只用主仓库数据——命中统计的价值在
+    # 跨会话长期频率，不在并行会话内的临时使用；方案 A（git 仓库根
+    # 归一）/B（用户级+仓库哈希）需引入仓库身份概念，属过度设计，
+    # 待真出现跨 worktree 统计需求再上。实现要点：worktree 上下文里
+    # _record_hit 必须跳过（git rev-parse --show-toplevel != 主仓根
+    # 即是 worktree 的判据）。
     p = _project_skills_dir(cwd) / HITS_FILE
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
