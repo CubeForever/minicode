@@ -13,7 +13,7 @@ from .ask_user import AskUserTool
 from .memory import BrainSearchTool, BrainWriteTool
 from .panel import ConsultPanelTool
 from .skills import SkillTool
-from .worktree import WorktreeExploreTool
+from .worktree import WorktreeExploreTool, WorktreeImplementTool
 
 __all__ = [
     "Tool", "ToolContext", "ToolError", "ToolRegistry", "truncate_middle",
@@ -23,6 +23,7 @@ __all__ = [
     "WebFetchTool", "WebSearchTool", "NotebookEditTool", "ApplyPatchTool",
     "ExitPlanTool", "AskUserTool", "BrainWriteTool", "BrainSearchTool",
     "ConsultPanelTool", "SkillTool", "WorktreeExploreTool",
+    "WorktreeImplementTool",
     "build_registry",
 ]
 
@@ -37,5 +38,5 @@ def build_registry(shell_state, read_only: bool = False) -> ToolRegistry:
                   BashTool(shell_state), BashOutputTool(shell_state),
                   BashKillTool(shell_state), TodoWriteTool(), DispatchAgentTool(),
                   DispatchAgentsTool(), ExitPlanTool(), AskUserTool(),
-                  BrainWriteTool()]
+                  BrainWriteTool(), WorktreeImplementTool()]
     return ToolRegistry(tools)

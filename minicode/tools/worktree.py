@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Tuple
@@ -150,4 +152,232 @@ class WorktreeExploreTool(Tool):
             out.append(f"### 路 {i + 1}:{task}\n{text.strip()}\n")
         if failures:
             out.append("### 失败的路\n" + "\n".join(failures))
+        return "\n".join(out)
+
+
+def _decode_out(b: bytes) -> str:
+    """命令输出解码:utf-8 与 GBK 各解一次,取替换字符更少者
+    (Windows cmd 的报错文案是 GBK,直接 utf-8 会乱码)。"""
+    if not b:
+        return ""
+    best = b.decode("utf-8", errors="replace")
+    try:
+        alt = b.decode("gbk", errors="replace")
+        if alt.count("�") < best.count("�"):
+            best = alt
+    except (ValueError, UnicodeDecodeError):
+        pass
+    return best.strip()
+
+
+def _ckpt_dir(worktree: Path) -> "object":
+    """lane 检查点放 worktree 内部(要点 1+8):随 worktree 删除,
+    避免主仓 prune_checkpoint_roots 误删正在使用的检查点。"""
+    from ..checkpoints import CheckpointManager
+    return CheckpointManager(worktree / ".minicode" / "checkpoints")
+
+
+def _run_check(check: str, worktree: Path) -> Tuple[bool, str]:
+    """在 lane worktree 里跑客观校验命令,返回 (是否通过, 输出尾部)。"""
+    try:
+        proc = subprocess.run(check, shell=True, cwd=str(worktree),
+                              capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return False, "(check 超时 300s)"
+    out = _decode_out((proc.stdout or b"") + (proc.stderr or b""))
+    return proc.returncode == 0, out[-400:]
+
+
+# lane 产物过滤:这些是运行副产物(如 check 命令跑 Python 生成的
+# __pycache__),不是方案改动——与 run_redteam 的 harness 卫生同款
+_LANE_SKIP = ("__pycache__", ".pytest_cache", ".minicode", ".git",
+              "node_modules")
+
+
+def _lane_paths(worktree: Path) -> List[str]:
+    """lane 相对 HEAD 的改动路径(porcelain,已过滤运行副产物)。
+
+    过滤是必需的:check 命令(如 python -c)会生成 __pycache__,
+    不分青红皂白地应用会撞上目录复制/权限问题,也污染零污染验证。
+    """
+    st = _git(["status", "--porcelain"], worktree)
+    paths: List[str] = []
+    for ln in st.stdout.decode("utf-8", "replace").splitlines():
+        if len(ln) < 4:
+            continue
+        raw = ln[3:].strip()
+        path = raw.strip('"')
+        if not path or raw.endswith("/"):
+            continue
+        parts = Path(path).parts
+        if any(part in _LANE_SKIP for part in parts):
+            continue
+        paths.append(path)
+    return paths
+
+
+def _apply_lane(worktree: Path, main: Path) -> List[str]:
+    """把胜出 lane 的改动(相对 HEAD)逐文件应用到主仓库。
+
+    主仓在入口已验证 porcelain 干净,故只触碰 lane 改过的文件 = 零污染。
+    worktree 里存在而 HEAD 没有的路径 → 复制;worktree 里删除的 → 主仓删除。
+    """
+    applied: List[str] = []
+    for path in _lane_paths(worktree):
+        src = worktree / path
+        dst = main / path
+        if src.exists():
+            existed = dst.exists()
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            applied.append(("M " if existed else "A ") + path)
+        elif dst.exists():
+            dst.unlink()
+            applied.append("D " + path)
+    return applied
+
+
+class WorktreeImplementTool(Tool):
+    """写权限并行实现(v0.26.2):N 路 worktree 各自实现方案,N 选 1 应用回主仓。
+
+    流程:主仓 porcelain 干净门 → 两路并行实现(可写子代理,检查点在
+    worktree 内部)→ 各路跑 check 命令客观选优 → 胜出方案的改动逐文件
+    应用回主仓 → 零污染验证(应用后主仓 porcelain 应恰好等于应用清单)。
+    红队+蓝队质量链**不在本工具内**(要点 7)——应用后手动 /redteam →
+    /bluefix,只对胜出方案跑。无 check 命令时不自动应用(缺客观选优依据)。
+    """
+    name = "worktree_implement"
+    kind = "write"
+    description = (
+        "Implement 2 solution variants in parallel, each in its own isolated "
+        "git worktree with a WRITABLE subagent, then apply the winner back to "
+        "the main repository (N-choose-1, no auto-merge). Objective ranking "
+        "via the required `check` command run in each worktree. Preconditions: "
+        "main repo must be clean (git status --porcelain empty); lane agents "
+        "must make their solution self-contained. Red/blue quality chain "
+        "should be run manually on the applied winner afterwards.")
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "两份实现指令(方案 A / 方案 B),各自必须自洽。",
+            },
+            "check": {
+                "type": "string",
+                "description": ("客观校验命令(在每路 worktree 里运行,退出码 "
+                                "0 = 通过;支持 {python} 占位符)。提供后才自动"
+                                "应用胜出方案。"),
+            },
+        },
+        "required": ["tasks", "check"],
+    }
+
+    def describe_call(self, args: dict) -> str:
+        tasks = args.get("tasks") or []
+        return ("双路并行实现 + N 选 1 应用: "
+                + " / ".join(str(t)[:36] for t in tasks[:2]))
+
+    def run(self, args: dict, ctx: ToolContext) -> str:
+        if not callable(getattr(ctx, "worktree_factory", None)):
+            raise ToolError("当前上下文没有写权限 worktree 工厂")
+        tasks = [str(t).strip() for t in (args.get("tasks") or [])
+                 if str(t).strip()]
+        if len(tasks) != 2:
+            raise ToolError("tasks 需要 2 份实现指令(方案 A / 方案 B)")
+        check = str(args.get("check") or "").replace(
+            "{python}", f'"{sys.executable}"')
+        if not check:
+            raise ToolError("check 命令必填——没有客观选优依据就不自动应用")
+        base = Path(ctx.cwd)
+        st = _git(["status", "--porcelain"], base)
+        if st.returncode != 0:
+            raise ToolError("主仓 git status 失败——无法安全应用")
+        if st.stdout.strip():
+            raise ToolError("主仓库有未提交改动——请先提交或 stash 再并行"
+                            "实现(写权限版硬约束,防止覆盖你的改动)")
+
+        lanes: List[dict] = []
+        lock = threading.Lock()
+
+        def one(i: int, task: str) -> None:
+            t0 = time.time()
+            wt = Path(tempfile.mkdtemp(prefix=f"minicode-impl{i+1}-"))
+            add = _git(["worktree", "add", "--detach", str(wt), "HEAD"], base)
+            if add.returncode != 0:
+                with lock:
+                    lanes.append({"i": i, "task": task, "wt": None,
+                                  "error": add.stderr.decode(
+                                      "utf-8", "replace")[:200]})
+                shutil.rmtree(wt, ignore_errors=True)
+                return
+            ckpt = _ckpt_dir(wt)
+            blue = ctx.worktree_factory(task, wt, ckpt)
+            check_ok, check_out = _run_check(check, wt)
+            changed = _lane_paths(wt)
+            with lock:
+                lanes.append({"i": i, "task": task, "wt": wt, "error": "",
+                              "seconds": round(time.time() - t0, 1),
+                              "blue": str(blue or "(无输出)"),
+                              "check_ok": check_ok,
+                              "check_out": check_out[-400:],
+                              "changed": changed})
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                list(ex.map(lambda pair: one(*pair), enumerate(tasks)))
+        finally:
+            # lane 的改动要在清理前应用——先记录胜者,再统一清理
+            pass
+
+        crashed = [lane for lane in lanes if lane.get("error")]
+        if crashed and not any(lane.get("changed") is not None
+                               for lane in lanes):
+            raise ToolError("两路均未产出改动: "
+                            + "; ".join(lane["error"] for lane in crashed))
+        passing = [lane for lane in lanes if lane.get("check_ok")]
+        applied_to = None
+        applied_files = []
+        if passing:
+            winner = passing[0]           # 并列时取第一路,报告中说明
+            applied_files = _apply_lane(Path(winner["wt"]), base)
+            applied_to = winner["i"]
+        # 清理全部 worktree(检查点在 worktree 内部,随之删除——要点 1+8)
+        for lane in lanes:
+            if lane.get("wt"):
+                rm = _git(["worktree", "remove", "--force",
+                           str(lane["wt"])], base)
+                if rm.returncode != 0:
+                    shutil.rmtree(lane["wt"], ignore_errors=True)
+        _git(["worktree", "prune"], base)
+
+        after_paths = _lane_paths(base)   # 同款过滤:副产物不算污染
+        out = [f"## 并行实现报告({len(lanes)} 路)"]
+        for lane in lanes:
+            tag = f"路 {lane['i'] + 1}"
+            if lane.get("error"):
+                out.append(f"### {tag}:创建失败 — {lane['error']}")
+                continue
+            mark = "PASS" if lane["check_ok"] else "FAIL"
+            win = " ← 已应用" if applied_to == lane["i"] else ""
+            out.append(f"### {tag}{win} — check [{mark}] "
+                       f"({lane['seconds']}s)\n{lane['blue']}\n"
+                       f"check 输出尾部: {lane['check_out']}")
+        if applied_to is not None:
+            out.append("### 已应用回主仓(逐文件)\n"
+                       + "\n".join(applied_files)
+                       + f"\n\n应用后主仓 porcelain {len(after_paths)} 项"
+                       f"(应用清单 {len(applied_files)} 项)——"
+                       + ("零污染 ✔" if len(after_paths) == len(applied_files)
+                          else "⚠ 出现意外改动,请立即 git status 检查"))
+        else:
+            out.append("### 未应用\n"
+                       "无一路通过 check(或未提供客观依据)——"
+                       "两路报告如上,请人工决策")
+        if passing and len(passing) > 1:
+            out.append(f"> {len(passing)} 路并列通过 check,已应用第一路;"
+                       "建议对胜出方案手动跑 /redteam → /bluefix")
         return "\n".join(out)

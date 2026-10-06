@@ -17,6 +17,10 @@ class ToolContext:
     session: object
     ui: object
     agent_factory: Optional[Callable[[str], str]] = None  # for dispatch_agent
+    # 写权限并行实现(v0.26.2):worktree_implement 用它派"可写"子代理到
+    # 独立 worktree。签名 (prompt, cwd, checkpoints)——checkpoints 由调用
+    # 方创建并放在 worktree 内部(随 worktree 删除,避免 prune 误删)。
+    worktree_factory: Optional[Callable] = None
 
 
 class Tool:

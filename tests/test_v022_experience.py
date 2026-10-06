@@ -83,7 +83,7 @@ def test_brain_search_cjk_and_english(tmp_path):
 def test_brain_search_tool_registered(tmp_path):
     reg = build_registry(ShellState(tmp_path, "bash"))
     assert "brain_search" in reg.tools
-    assert len(reg.tools) == 23
+    assert len(reg.tools) == 24
 
 
 # ---------- 2. MCP 渐进披露 ----------

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.26.3 (2026-10-06)
+
+worktree 写权限并行实现版（第 24 号工具，N 选 1，**不做自动合并**）：
+
+**worktree_implement（kind=write，整操作一次确认）**
+- 流程：主仓 git status --porcelain 干净门（硬约束，防覆盖用户未提交改动）→ 两路 worktree 各自实现（可写子代理，方案必须自洽提示词）→ 各路跑 check 命令客观选优 → **仅胜出方案逐文件应用回主仓**（改/增/删三类全传播）→ 应用后 porcelain 与应用清单比对做零污染验证
+- **N 选 1 而非自动合并**（审查定论）：合并正确性验证成本极高，而选出最优的一路并应用语义清晰——best-of-N 从 N 个答案升级为 N 个可运行方案
+- **检查点放 worktree 内部**（审查要点 1+8）：随 worktree 删除，避免被主仓 prune_checkpoint_roots 误删
+- **红蓝质量链不在本工具内**（审查要点 7）：只对胜出方案在应用后手动跑 /redteam → /bluefix——成本 = N 路探索 + 1 次质量门禁
+- 无一路通过 check → 不应用，两路报告交人工决策；lane 产物过滤（__pycache__/.pytest_cache/.minicode 等运行副产物不进应用清单）
+- ToolContext 新增 worktree_factory 字段；cli 提供写权限工厂（独立 ShellState/ToolContext，25 次迭代上限，lane 内不派生子代理防成本放大）
+
+**测试** 426 项（+7：零污染三分类传播/脏仓拒绝/无 check 拒绝/任务数约束/双路皆败不应用/创建失败上抛/检查点在 worktree 内）。
+
 ## 0.26.2 (2026-10-06)
 
 描述勘误与方法论注记(均为注释/描述层,不动逻辑):

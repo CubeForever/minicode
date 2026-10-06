@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "minicode"
-version = "0.26.2"
+version = "0.26.3"
 description = "A Claude Code-style terminal coding agent — zero dependencies, works with OpenAI-compatible & Anthropic APIs."
 readme = "README.md"
 requires-python = ">=3.9"

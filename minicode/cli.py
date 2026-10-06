@@ -321,6 +321,27 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     agent = Agent(provider, session, ui, cfg,
                   _make_registry(base_tools, mcp_tools, ui),
                   checkpoints=CheckpointManager(ckpt_root))
+
+    # 写权限并行实现工厂(v0.26.2):worktree_implement 用它把"可写"子代理
+    # 派进独立 worktree。检查点目录放在 worktree 内部——随 worktree 删除,
+    # 避免被主仓的 prune_checkpoint_roots 误删(审查要点 1+8)。
+    def worktree_factory(prompt: str, cwd: Path, checkpoints) -> str:
+        sub_ui = SubUI(ui)
+        sub_session = Session()
+        sub_shell = ShellState(cwd, detect_shell(cfg.shell))
+        sub = Agent(provider, sub_session, sub_ui, cfg,
+                    build_registry(sub_shell), max_iterations=25,
+                    checkpoints=checkpoints)
+        # 蓝队/红队链只在"被选中的方案"应用回主仓后手动跑(审查要点 7),
+        # lane 内不再派生子代理,防止成本放大
+        sub.ctx = ToolContext(cwd=cwd, config=cfg, session=sub_session,
+                              ui=sub_ui, agent_factory=None)
+        sub.system_prompt = (
+            "你在为一个独立 git worktree 实现方案。**方案必须自洽**:"
+            "只保证本方案在你的 worktree 里能独立跑通,不需要考虑与其他"
+            "并行方案的兼容性(评审后会 N 选 1)。完成后运行可用校验自证。")
+        sub.run_turn(prompt)
+        return sub_session.messages[-1].get("content") or "(无输出)"
     agent.ctx.agent_factory = factory
     from .prompts import assemble_system_prompt
     agent.system_prompt = assemble_system_prompt(cfg, cfg.cwd, agents)
@@ -330,6 +351,7 @@ def _build_agent(cfg, provider, session, ui, mcp_manager=None) -> Agent:
     agent.mcp = mcp_manager
     agent._prompt_cwd = cfg.cwd
     agent._custom_agents = agents
+    agent.ctx.worktree_factory = worktree_factory
     return agent
 
 
