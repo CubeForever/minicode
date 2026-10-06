@@ -58,7 +58,7 @@ class WorktreeExploreTool(Tool):
         "subagent; reports are merged. Use for multi-angle investigations "
         "(root-cause hunts, design-space surveys) on the committed state — "
         "not for single-path tasks, and uncommitted changes are not visible. "
-        "Requires a git repository.")
+        "Requires a git repository. Need more lanes? Run in batches of 2-4.")
     input_schema = {
         "type": "object",
         "properties": {
@@ -79,13 +79,19 @@ class WorktreeExploreTool(Tool):
             str(t)[:40] for t in tasks[:3])
 
     def run(self, args: dict, ctx: ToolContext) -> str:
+        import inspect
         tasks = args.get("tasks") or []
         tasks = [str(t).strip() for t in tasks if str(t).strip()]
         if len(tasks) < MIN_TASKS or len(tasks) > MAX_TASKS:
             raise ToolError(f"tasks 需要 {MIN_TASKS}-{MAX_TASKS} 条,收到 "
-                            f"{len(tasks)} 条")
+                            f"{len(tasks)} 条(更多路请分批调用)")
         if not callable(getattr(ctx, "agent_factory", None)):
             raise ToolError("当前上下文没有子代理工厂")
+        # 显式签名检查,一次性放循环外——except TypeError 会把子代理内部
+        # 的类型错误误报成"工厂签名不对",误导排查方向(v0.26.1 审查①)
+        if "cwd" not in inspect.signature(ctx.agent_factory).parameters:
+            raise ToolError("子代理工厂不支持 cwd 参数——需要 v0.26 的"
+                            "factory(cwd=) 签名")
         base = Path(ctx.cwd)
         r = _git(["rev-parse", "--is-inside-work-tree"], base)
         if r.returncode != 0:
@@ -110,16 +116,10 @@ class WorktreeExploreTool(Tool):
                     shutil.rmtree(wt, ignore_errors=True)
                     return
                 worktrees.append((i, wt))
-            try:
-                out = ctx.agent_factory(
-                    EXPLORE_PROMPT.format(task=task), cwd=wt)
-                with lock:
-                    results.append((i, task, str(out or "(无输出)")))
-            except TypeError:
-                raise ToolError("子代理工厂不支持 cwd 参数——需要 v0.26 的"
-                                "factory(cwd=) 签名")
-            finally:
-                pass
+            out = ctx.agent_factory(
+                EXPLORE_PROMPT.format(task=task), cwd=wt)
+            with lock:
+                results.append((i, task, str(out or "(无输出)")))
 
         try:
             with ThreadPoolExecutor(max_workers=len(tasks)) as ex:
