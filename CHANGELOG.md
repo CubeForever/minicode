@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.25.1 (2026-10-06)
+
+v0.25 三不变量的真数据验证跑 + 两个实战发现当日修复：
+
+**验证跑（implement-spec findings,3 次尝试,全部正确标记）**
+- 尝试 1:蓝队 600s×2 退避后仍超时 → void:timeout ✔(作废语义首次实战)
+- 尝试 2:蓝队 503s 完成,最终正文仅"我先"(生成截断) →
+  void:no_selfverify ✔(0 条声明命令,数据自动隔离)
+- 尝试 3:✓ 通过,data_validity=valid——**valid 值域首次落地**
+- frontmatter 写入路径三真跑三正确;run_headless 退避重试实战触发
+  (600s 上限内重试一次)
+
+**归因首战命中**:尝试 3 的 14 条自验全部 FAIL,门 14/14 归因
+"自验命令本身写错"(SyntaxError: unterminated string literal),
+零误判为"蓝队未修复"——exit 码/traceback 末行/归因三件套在真数据上
+完成判别,正是 v0.25 不变量 2 的设计目标。
+
+**实战发现当日修复:单引号 -c 命令**
+- 蓝队在 Windows 写 `python -c '...'`(单引号),cmd.exe 不解析,
+  14/14 SyntaxError——蓝队写自验命令的高频踩坑
+- 蓝队提示词明令:`-c` 参数必须用双引号包裹,命令内字符串用单引号
+- 超时调优数据入档:300s full 超时 / 360s 双超时 / 600s 双过 /
+  findings 600s 1/3 成功——蓝队负载(契约驱动+自验矩阵)需要长预算,
+  v0.26 前置观察项
+
+**工具层强制(heredoc 事故的根治)**:check_consistency 新增第 11 项——
+全仓 Python 文件(minicode/tests/scripts)必须可被 ast 解析,任何
+shell-heredoc 转义污染(字符串字面量被真实换行打断)在推送阶段即 CI
+失败,不再依赖"记得用 Edit/Write"的文档约定。一致性检查 23→24 项。
+
+测试 408 项(提示词断言加强)。
+
 ## 0.25.0 (2026-10-05)
 
 harness 硬化专版（三个不变量 + 诊断增强 + 退避重试；**不加新功能**）：

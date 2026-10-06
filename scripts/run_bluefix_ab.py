@@ -73,6 +73,9 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--out", default=str(ROOT / "eval" / "bluefix"))
     ap.add_argument("--keep-sandbox", action="store_true")
+    ap.add_argument("--mode", default="",
+                    choices=("",) + MODES,
+                    help="只跑单个模式(如 findings)——验证跑用,默认 A/B 全跑")
     args = ap.parse_args()
 
     tasks = {t["id"]: t for t in run_eval.load_tasks(Path(args.tasks))}
@@ -88,7 +91,8 @@ def main() -> int:
     print(f"A/B 对照实验 — {args.task}\n")
     results = {}
     red_report = None   # 每次求解后新跑红队——评审对象与被校验对象绑定
-    for mode in MODES:
+    modes = (args.mode,) if args.mode else MODES
+    for mode in modes:
         sandbox = Path(tempfile.mkdtemp(
             prefix=f"minicode-bluefix-{args.task}-{mode}-"))
         try:

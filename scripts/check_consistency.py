@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import ast
 import io
 import re
 import subprocess
@@ -159,6 +160,24 @@ try:
 except ImportError as _e:  # report_meta 缺失也不该静默通过
     check("实验报告 frontmatter 完备（缺失即作废）", False,
           f"无法导入 report_meta: {_e}")
+
+# ---------- 11. 全仓 Python 文件 ast 可解析（v0.25.1,工具层强制） ----------
+# 背景:两次 shell-heredoc 转义事故把源码里的 \n 变成真实换行(字符串字面量
+# 被打断)。文档约定对"顺手用 shell"的场景无效——改为门禁:任何
+# minicode/ tests/ scripts/ 下的 .py 文件不可被 ast 解析即 CI 失败,
+# 这一类污染在推送阶段就被拦下,而不是等到测试导入时。
+_broken = []
+for _d in ("minicode", "tests", "scripts"):
+    for _p in sorted((ROOT / _d).rglob("*.py")):
+        try:
+            ast.parse(_p.read_text(encoding="utf-8"),
+                       filename=str(_p.relative_to(ROOT)))
+        except SyntaxError as _e:
+            _broken.append(f"{_p.relative_to(ROOT)}:{_e.lineno}")
+        except (OSError, UnicodeDecodeError) as _e:
+            _broken.append(f"{_p.relative_to(ROOT)}:读取失败 {_e}")
+check("全仓 Python 文件 ast 可解析（heredoc 转义污染拦截）", not _broken,
+      f"{len(_broken)} 个文件语法损坏: {_broken[:3]}")
 
 # ---------- 结果 ----------
 print()
