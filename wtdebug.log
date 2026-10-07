@@ -34,3 +34,6 @@ C 断言前: __pycache__=True
 A git 后: __pycache__=False
 B 工具后: __pycache__=True
 C 断言前: __pycache__=True
+A git 后: __pycache__=False
+B 工具后: __pycache__=True
+C 断言前: __pycache__=True

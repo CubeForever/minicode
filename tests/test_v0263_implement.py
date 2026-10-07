@@ -117,8 +117,11 @@ def test_requires_exactly_two_tasks(tmp_path):
 def test_no_lane_passes_check_applies_nothing(tmp_path):
     """两路都不过 check → 不应用,主仓保持干净。"""
     repo = _git_repo(tmp_path)
-    _snap = lambda tag: open("wtdebug.log", "a").write(
-        tag + ": __pycache__=" + str((repo / "__pycache__").exists()) + "\n")
+
+    def _snap(tag):
+        open("wtdebug.log", "a").write(
+            tag + ": __pycache__=" + str((repo / "__pycache__").exists()) + "\n")
+
     _snap("A git 后")
 
     def factory(prompt, cwd, checkpoints):
