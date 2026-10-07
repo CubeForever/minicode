@@ -189,7 +189,9 @@ def _run_check(check: str, worktree: Path) -> Tuple[bool, str]:
 
 
 # lane 产物过滤:这些是运行副产物(如 check 命令跑 Python 生成的
-# __pycache__),不是方案改动——与 run_redteam 的 harness 卫生同款
+# __pycache__),不是方案改动——与 run_redteam / run_bluefix_ab 的
+# harness 卫生同款(三处各自维护)。v0.26.4 审查:第 4 处无头链路
+# 出现时,抽公共模块(如 minicode/harness.py 的 RUN_ARTIFACTS)统一。
 _LANE_SKIP = ("__pycache__", ".pytest_cache", ".minicode", ".git",
               "node_modules")
 
@@ -199,6 +201,11 @@ def _lane_paths(worktree: Path) -> List[str]:
 
     过滤是必需的:check 命令(如 python -c)会生成 __pycache__,
     不分青红皂白地应用会撞上目录复制/权限问题,也污染零污染验证。
+
+    已知局限(v0.26.4 记录):git 对含中文/特殊字符的路径会做 C 风格
+    转义(\344\270\255 形式),strip('"') 只去引号不解转义——这类路径会
+    被静默跳过(罕见;根治需改用 git status --porcelain=-z 的 NUL
+    分隔输出)。绝大多数 ASCII 路径不受影响。
     """
     st = _git(["status", "--porcelain"], worktree)
     paths: List[str] = []
@@ -341,10 +348,24 @@ class WorktreeImplementTool(Tool):
         passing = [lane for lane in lanes if lane.get("check_ok")]
         applied_to = None
         applied_files = []
+        archives: List[str] = []
+        winner_paths: List[str] = []
         if passing:
-            winner = passing[0]           # 并列时取第一路,报告中说明
+            # 选优边界(v0.26.4,审查):多路并列通过 check 时**不做智能
+            # 裁决**——应用第一路,其余通过路的完整 diff 存档供用户换选
+            winner = passing[0]
+            winner_paths = _lane_paths(Path(winner["wt"]))
             applied_files = _apply_lane(Path(winner["wt"]), base)
             applied_to = winner["i"]
+            arch_dir = base / ".minicode" / "worktree"
+            for lane in passing:
+                pdiff = _git(["diff", "HEAD"], Path(lane["wt"]))
+                arch_dir.mkdir(parents=True, exist_ok=True)
+                ap = arch_dir / f"{time.strftime('%Y%m%d-%H%M%S')}" \
+                     f"-lane{lane['i'] + 1}.patch"
+                ap.write_text(pdiff.stdout.decode("utf-8", "replace"),
+                              encoding="utf-8")
+                archives.append(str(ap))
         # 清理全部 worktree(检查点在 worktree 内部,随之删除——要点 1+8)
         for lane in lanes:
             if lane.get("wt"):
@@ -354,7 +375,13 @@ class WorktreeImplementTool(Tool):
                     shutil.rmtree(lane["wt"], ignore_errors=True)
         _git(["worktree", "prune"], base)
 
-        after_paths = _lane_paths(base)   # 同款过滤:副产物不算污染
+        # 零污染验证(v0.26.4):应用后主仓 porcelain 的路径集应恰好等于
+        # 胜出 lane 的改动路径集(含 D 删除;过滤副产物后逐路径比对)
+        after_paths = _lane_paths(base)
+        zero_pollution = sorted(winner_paths) == sorted(after_paths)
+        # 第四指标(v0.26.4,审查补充):应用后主仓能否直接通过 check——
+        # 这是"应用回主仓"的最终验收(防止方案依赖 worktree 里未应用的文件)
+        post_check_ok, post_check_out = _run_check(check, base)
         out = [f"## 并行实现报告({len(lanes)} 路)"]
         for lane in lanes:
             tag = f"路 {lane['i'] + 1}"
@@ -367,17 +394,24 @@ class WorktreeImplementTool(Tool):
                        f"({lane['seconds']}s)\n{lane['blue']}\n"
                        f"check 输出尾部: {lane['check_out']}")
         if applied_to is not None:
+            tie_note = ""
+            if len(passing) > 1:
+                tie_note = (f"\n\n### 选优边界(并列不裁决)\n"
+                            f"{len(passing)} 路并列通过 check,已应用第一路;"
+                            "其余通过路的完整 diff 已存档,如需换选可 "
+                            "`git apply` 对应 patch:\n"
+                            + "\n".join(f"- {a}" for a in archives))
             out.append("### 已应用回主仓(逐文件)\n"
                        + "\n".join(applied_files)
-                       + f"\n\n应用后主仓 porcelain {len(after_paths)} 项"
-                       f"(应用清单 {len(applied_files)} 项)——"
-                       + ("零污染 ✔" if len(after_paths) == len(applied_files)
-                          else "⚠ 出现意外改动,请立即 git status 检查"))
+                       + "\n\n零污染验证:应用后主仓改动路径"
+                       + ("恰好等于胜出 lane 的改动 ✔"
+                          if zero_pollution
+                          else "⚠ 与胜出 lane 不一致——请 git status 检查")
+                       + f"\n\n### 应用后主仓 check(第四指标)\n"
+                       f"[{'PASS' if post_check_ok else 'FAIL'}] "
+                       f"{check}\n{post_check_out[-400:]}" + tie_note)
         else:
             out.append("### 未应用\n"
                        "无一路通过 check(或未提供客观依据)——"
                        "两路报告如上,请人工决策")
-        if passing and len(passing) > 1:
-            out.append(f"> {len(passing)} 路并列通过 check,已应用第一路;"
-                       "建议对胜出方案手动跑 /redteam → /bluefix")
         return "\n".join(out)

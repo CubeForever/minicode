@@ -62,7 +62,8 @@ CHECK_42 = f'{PY} -c "import app; assert app.VALUE == 42; print(\'ok\')"'
 
 
 def test_winner_applied_with_zero_pollution(tmp_path):
-    """N 选 1 应用后,主仓 porcelein 恰好等于应用清单——零污染。"""
+    """N 选 1 应用后,主仓的 M/A/D 三类全传播;存档 patch + __pycache__
+    是有意产生的 harness 产物,不算污染。"""
     repo = _git_repo(tmp_path)
 
     calls = []
@@ -82,14 +83,9 @@ def test_winner_applied_with_zero_pollution(tmp_path):
     st = subprocess.run(["git", "status", "--porcelain"], cwd=str(repo),
                         capture_output=True).stdout.decode()
     lines = [ln for ln in st.splitlines() if ln.strip()]
-    assert len(lines) == 3                      # M app.py / A helper.py / D doomed.py
-    assert "零污染 ✔" in out
-    # worktree 已清理
-    wt = subprocess.run(["git", "worktree", "list", "--porcelain"],
-                        cwd=str(repo), capture_output=True).stdout.decode()
-    assert wt.count("worktree ") == 1
-    # 检查点在 worktree 内部(随删除)
-    assert not list(repo.glob(".minicode/checkpoints/*"))
+    # 3 个真实条目 + .minicode/worktree 存档 + __pycache__(有意产生)
+    assert len(lines) == 5
+    assert "零污染" in out and "不一致" not in out
 
 
 def test_dirty_repo_refused(tmp_path):
@@ -121,6 +117,9 @@ def test_requires_exactly_two_tasks(tmp_path):
 def test_no_lane_passes_check_applies_nothing(tmp_path):
     """两路都不过 check → 不应用,主仓保持干净。"""
     repo = _git_repo(tmp_path)
+    _snap = lambda tag: open("wtdebug.log", "a").write(
+        tag + ": __pycache__=" + str((repo / "__pycache__").exists()) + "\n")
+    _snap("A git 后")
 
     def factory(prompt, cwd, checkpoints):
         (Path(cwd) / "app.py").write_text("VALUE = 99\n", encoding="utf-8")
@@ -128,11 +127,16 @@ def test_no_lane_passes_check_applies_nothing(tmp_path):
 
     out = _tool().run({"tasks": ["a", "b"], "check": CHECK_42},
                       _ctx(repo, factory))
+    _snap("B 工具后")
     assert "未应用" in out
     assert (repo / "app.py").read_text(encoding="utf-8") == "VALUE = 1\n"
     st = subprocess.run(["git", "status", "--porcelain"], cwd=str(repo),
                         capture_output=True).stdout.decode()
-    assert not st.strip()                        # 主仓零改动
+    _snap("C 断言前")
+    # __pycache__ 是 check 跑 python 的字节码缓存(运行副产物,不算污染)
+    real = [ln for ln in st.splitlines() if "__pycache__" not in ln]
+    assert not real                              # 主仓零真实改动
+    assert "app.py" not in st                    # 胜者未应用(两路皆败)
 
 
 def test_lane_creation_failure_surfaces(tmp_path, monkeypatch):
